@@ -1,8 +1,14 @@
-use crate::{Error, Result, git::is_commit_sha, models::AdoIdentity, organization::Organization};
+use crate::{
+    Error, Result, git::is_commit_sha, models::AdoIdentity, organization::Organization,
+    platform::is_swift_control,
+};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use reqwest::{Method, blocking::Client};
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 use url::Url;
 
 #[derive(Debug, Clone)]
@@ -29,6 +35,7 @@ impl ReqwestTransport {
     pub fn new() -> Result<Self> {
         let client = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(60))
             .build()
             .map_err(|_| Error("The Azure DevOps request could not be completed.".into()))?;
         Ok(Self { client })
@@ -153,7 +160,7 @@ impl<T: HttpTransport> AdoClient<T> {
             format!("/{path}")
         };
         if normalized.len() <= 1
-            || normalized.chars().any(char::is_control)
+            || normalized.chars().any(is_swift_control)
             || normalized.contains("//")
             || normalized.split('/').any(|p| p == "." || p == "..")
         {
@@ -491,7 +498,7 @@ impl<T: HttpTransport> AdoClient<T> {
             return Err(Error("Azure DevOps redirected the request. Redirects are disabled for authenticated requests.".into()));
         }
         if !(200..300).contains(&res.status) {
-            let path = req.url.path();
+            let path = percent_encoding::percent_decode_str(req.url.path()).decode_utf8_lossy();
             return Err(Error(match res.status{401=>"Azure DevOps rejected authentication (HTTP 401). Renew the affected profile with 'ado auth update NAME'.".into(),403=>"Azure DevOps denied access (HTTP 403). Check the profile's PAT scopes and account permissions for this repository.".into(),s=>format!("Azure DevOps returned HTTP {s} for {} {path}.",req.method)}));
         }
         Ok(res)

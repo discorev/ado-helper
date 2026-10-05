@@ -10,19 +10,28 @@ use ado_core::{
     },
     keychain::{CredentialStore, KeychainStore},
     organization::{Organization, PrLocator},
+    platform::terminal_safe,
     profiles::{Profile, ProfileStore},
 };
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
 
 fn main() {
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     if let Err(e) = run() {
-        eprintln!("error: {}", safe(&e.to_string()));
+        eprintln!("error: {}", terminal_safe(&e.to_string()));
         std::process::exit(1)
     }
 }
 fn run() -> Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|value| {
+            value
+                .into_string()
+                .map_err(|_| Error("Command-line arguments must be valid UTF-8.".into()))
+        })
+        .collect::<Result<_>>()?;
     let command = ado_core::cli::parse(&args)?;
     if command == CliCommand::Help {
         println!("{HELP}");
@@ -108,7 +117,7 @@ impl Application {
                 let iterations =
                     r.client
                         .iterations(&repo.project, &repo.repository, r.locator.id)?;
-                let iteration = iteration.unwrap_or(latest_iteration(&iterations)?);
+                let iteration = requested_iteration(iteration, &iterations)?;
                 let changes =
                     r.client
                         .changes(&repo.project, &repo.repository, r.locator.id, iteration)?;
@@ -182,14 +191,14 @@ impl Application {
                     "{}\t{}\t{}\tverified",
                     p.name,
                     p.organization.url(),
-                    safe(&id.unique_name)
+                    terminal_safe(&id.unique_name)
                 );
             } else {
                 println!(
                     "{}\t{}\t{}",
                     p.name,
                     p.organization.url(),
-                    safe(&p.identity.unique_name)
+                    terminal_safe(&p.identity.unique_name)
                 );
             }
         }
@@ -512,6 +521,12 @@ fn repository_identity(v: &Value) -> Result<RepositoryIdentity> {
             .collect(),
     })
 }
+fn requested_iteration(requested: Option<i64>, iterations: &[Value]) -> Result<i64> {
+    match requested {
+        Some(value) => Ok(value),
+        None => latest_iteration(iterations),
+    }
+}
 fn latest_iteration(v: &[Value]) -> Result<i64> {
     v.iter()
         .filter_map(|x| x.get("id").and_then(integer))
@@ -679,11 +694,12 @@ fn validate_thread(v: &Value, id: i64, path: &str, line: i64, end: i64, side: &s
     }
 }
 fn read_body(path: &str) -> Result<String> {
-    let m = fs::metadata(path)?;
+    let m =
+        fs::metadata(path).map_err(|_| Error("Could not read the comment body file.".into()))?;
     if m.len() > 1_048_576 {
         return Err(Error("Comment body file must be 1 MiB or smaller.".into()));
     }
-    let data = fs::read(path)?;
+    let data = fs::read(path).map_err(|_| Error("Could not read the comment body file.".into()))?;
     let body = String::from_utf8(data)
         .map_err(|_| Error("Comment body file must contain nonempty UTF-8 text.".into()))?;
     if body.trim().is_empty() {
@@ -706,9 +722,18 @@ fn write_value<T: serde::Serialize>(v: &T) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(v)?);
     Ok(())
 }
-fn safe(s: &str) -> String {
-    s.chars()
-        .map(|c| if c.is_control() { '�' } else { c })
-        .collect()
-}
 const HELP: &str = "Usage:\n  ado auth add NAME --org URL [--no-browser]\n  ado auth update NAME [--no-browser]\n  ado auth status [--check]\n  ado auth remove NAME\n  ado pr show [TARGET] [--profile NAME]\n  ado pr threads [TARGET] [--profile NAME]\n  ado pr changes [TARGET] [--profile NAME] [--iteration N]\n  ado pr clone [TARGET] [--profile NAME] [--directory PATH]\n  ado pr diff [TARGET] [--profile NAME] [--directory PATH]\n  ado pr comment [TARGET] --file PATH --line N [--end-line N] --side left|right\n      --body-file PATH --commit SHA --iteration N --change-id N [--profile NAME]\n\nTARGET is an Azure DevOps PR URL or positive PR number. Omit it to use the current branch.\nPull-request data is written as JSON; authentication and help are human-readable.";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_iteration_does_not_evaluate_latest_iteration() {
+        assert_eq!(requested_iteration(Some(7), &[]).unwrap(), 7);
+        assert_eq!(
+            requested_iteration(None, &[]).unwrap_err().to_string(),
+            "Azure DevOps pull request response is missing pull request iteration."
+        );
+    }
+}

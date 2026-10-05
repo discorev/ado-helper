@@ -1,4 +1,4 @@
-use crate::{Error, Result};
+use crate::{Error, Result, platform::is_swift_control};
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use url::Url;
@@ -141,7 +141,7 @@ impl PrLocator {
         let mut segments = Vec::new();
         for raw in url.path().split('/').filter(|s| !s.is_empty()) {
             let decoded = decode(raw).map_err(|_| Error(PR_ERROR.into()))?;
-            if decoded.is_empty() || decoded.contains('/') || decoded.chars().any(char::is_control)
+            if decoded.is_empty() || decoded.contains('/') || decoded.chars().any(is_swift_control)
             {
                 return Err(Error(PR_ERROR.into()));
             }

@@ -4,6 +4,7 @@ use crate::{
     keychain::{CredentialStore, KeychainStore},
     models::AdoIdentity,
     organization::Organization,
+    platform::{is_swift_control, terminal_safe},
     profiles::{Profile, ProfileStore, validate_name},
     terminal,
 };
@@ -180,7 +181,9 @@ fn prepare<O: AuthOps>(ops: &mut O, org: &Organization, browser: bool) -> Result
 pub fn validate_token(token: &str) -> Result<()> {
     if !(20..=2048).contains(&token.len())
         || token.trim() != token
-        || token.chars().any(|c| c.is_control() || c.is_whitespace())
+        || token
+            .chars()
+            .any(|c| is_swift_control(c) || c.is_whitespace())
     {
         Err(Error(
             "The token is not plausible. Paste the complete PAT without spaces or line breaks."
@@ -201,8 +204,8 @@ pub fn scope_instructions(org: &Organization) -> String {
     )
 }
 fn identity_description(i: &AdoIdentity) -> String {
-    let d = safe(&i.display_name);
-    let u = safe(&i.unique_name);
+    let d = terminal_safe(&i.display_name);
+    let u = terminal_safe(&i.unique_name);
     if d.is_empty() {
         u
     } else if u.is_empty() {
@@ -210,11 +213,6 @@ fn identity_description(i: &AdoIdentity) -> String {
     } else {
         format!("{d} <{u}>")
     }
-}
-fn safe(s: &str) -> String {
-    s.chars()
-        .map(|c| if c.is_control() { '�' } else { c })
-        .collect()
 }
 fn open_url(url: &str) -> Result<()> {
     #[cfg(target_os = "macos")]

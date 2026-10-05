@@ -71,3 +71,5 @@ The offline suite exercises mock ADO responses, credential-store failures and re
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+JSON output is stable data, but consumers should parse it rather than depend on whitespace or slash-escaping details.

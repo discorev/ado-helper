@@ -1,4 +1,9 @@
-use crate::{Error, Result, models::AdoIdentity, organization::Organization};
+use crate::{
+    Error, Result,
+    models::AdoIdentity,
+    organization::Organization,
+    platform::{home_directory, localized_standard_cmp},
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -25,7 +30,7 @@ impl ProfileStore {
     pub fn new(directory: Option<PathBuf>) -> Result<Self> {
         let directory = match directory {
             Some(v) => v,
-            None => home()?.join(".config/ado"),
+            None => home_directory()?.join(".config/ado"),
         };
         prepare_directory(&directory)?;
         Ok(Self {
@@ -61,7 +66,7 @@ impl ProfileStore {
             Error("The profile file is invalid or contains duplicate profiles.".into())
         })?;
         validate_profiles(&profiles)?;
-        profiles.sort_by(|a, b| a.name.cmp(&b.name));
+        profiles.sort_by(|a, b| localized_standard_cmp(&a.name, &b.name));
         Ok(profiles)
     }
     pub fn save(&self, profile: &Profile) -> Result<()> {
@@ -194,9 +199,4 @@ fn prepare_directory(path: &Path) -> Result<()> {
     }
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
         .map_err(|_| Error("Could not secure the local profile store.".into()))
-}
-fn home() -> Result<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| Error("Could not determine the home directory.".into()))
 }

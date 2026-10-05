@@ -1,12 +1,18 @@
-use crate::{Error, Result};
+use crate::{
+    Error, Result,
+    platform::{home_directory, is_swift_control},
+};
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::HashSet,
     fs,
+    io::Write,
+    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     process::Command,
+    sync::atomic::{AtomicU64, Ordering},
 };
 use url::Url;
 
@@ -169,7 +175,12 @@ fn unchecked(o: &str, p: &str, r: &str, raw: &str) -> Result<AzureGitRemote> {
     })
 }
 fn component(v: &str, label: &str) -> Result<String> {
-    if v.is_empty() || v == "." || v == ".." || v.chars().any(|c| "/\\:\0\n\r".contains(c)) {
+    if v.is_empty()
+        || v == "."
+        || v == ".."
+        || v.chars()
+            .any(|c| is_swift_control(c) || "/\\:\0\n\r".contains(c))
+    {
         Err(Error(format!("Unsafe Git value: invalid {label}")))
     } else {
         Ok(v.into())
@@ -200,7 +211,7 @@ pub trait GitRunning {
 pub struct GitRunner;
 impl GitRunning for GitRunner {
     fn run(&self, args: &[String], directory: Option<&Path>) -> Result<String> {
-        let mut c = Command::new("/usr/bin/git");
+        let mut c = Command::new(git_executable());
         c.args(args);
         if let Some(d) = directory {
             c.current_dir(d);
@@ -388,9 +399,9 @@ fn missing(f: &str) -> Error {
 #[serde(rename_all = "camelCase")]
 pub struct ReviewCheckoutResult {
     pub directory: String,
+    pub merge_base: String,
     pub source_commit: String,
     pub target_commit: String,
-    pub merge_base: String,
 }
 pub struct ReviewCheckout<R: GitRunning = GitRunner> {
     pub runner: R,
@@ -409,12 +420,13 @@ impl<R: GitRunning> ReviewCheckout<R> {
         info: &PullRequestGitInfo,
         requested: Option<PathBuf>,
     ) -> Result<ReviewCheckoutResult> {
-        let dir = requested.unwrap_or_else(|| {
-            home()
+        let dir = match requested {
+            Some(directory) => directory,
+            None => home_directory()?
                 .join("Developer/ado-reviews")
                 .join(&info.target.organization)
-                .join(format!("{}-pr-{}", info.target.repository, info.id))
-        });
+                .join(format!("{}-pr-{}", info.target.repository, info.id)),
+        };
         let marker = dir.join(".git/ado-review.json");
         let expected = Marker::from(info);
         if dir.exists() {
@@ -458,7 +470,7 @@ impl<R: GitRunning> ReviewCheckout<R> {
                 ],
                 None,
             )?;
-            fs::write(&marker, serde_json::to_vec(&expected)?)?
+            write_marker(&marker, &serde_json::to_vec(&expected)?)?
         }
         self.fetch(
             &info.target_ssh_url,
@@ -504,9 +516,9 @@ impl<R: GitRunning> ReviewCheckout<R> {
         }
         Ok(ReviewCheckoutResult {
             directory: dir.to_string_lossy().into_owned(),
+            merge_base: mb.to_ascii_lowercase(),
             source_commit: info.source_commit.clone(),
             target_commit: info.target_commit.clone(),
-            merge_base: mb.to_ascii_lowercase(),
         })
     }
     fn fetch(&self, url: &str, reference: &str, expected: &str, dir: &Path) -> Result<()> {
@@ -563,10 +575,56 @@ impl From<&PullRequestGitInfo> for Marker {
         }
     }
 }
-fn home() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+fn write_marker(path: &Path, data: &[u8]) -> Result<()> {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let parent = path
+        .parent()
+        .ok_or_else(|| Error("Could not write the managed review marker.".into()))?;
+    let temp = parent.join(format!(
+        ".ado-review-{}-{}.tmp",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut options = fs::OpenOptions::new();
+    options
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let result = (|| {
+        let mut file = options
+            .open(&temp)
+            .map_err(|_| Error("Could not write the managed review marker.".into()))?;
+        file.write_all(data)
+            .map_err(|_| Error("Could not write the managed review marker.".into()))?;
+        file.sync_all()
+            .map_err(|_| Error("Could not write the managed review marker.".into()))?;
+        fs::rename(&temp, path)
+            .map_err(|_| Error("Could not write the managed review marker.".into()))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temp);
+    }
+    result
+}
+
+#[cfg(target_os = "macos")]
+fn git_executable() -> &'static Path {
+    Path::new("/usr/bin/git")
+}
+
+#[cfg(target_os = "linux")]
+fn git_executable() -> &'static Path {
+    [
+        "/usr/bin/git",
+        "/usr/local/bin/git",
+        "/run/current-system/sw/bin/git",
+        "/home/linuxbrew/.linuxbrew/bin/git",
+    ]
+    .into_iter()
+    .map(Path::new)
+    .find(|path| path.is_file())
+    .unwrap_or_else(|| Path::new("/usr/bin/git"))
 }
 
 fn explicit_port(value: &str) -> bool {

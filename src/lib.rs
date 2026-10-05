@@ -6,6 +6,7 @@ pub mod git;
 pub mod keychain;
 pub mod models;
 pub mod organization;
+pub mod platform;
 pub mod profiles;
 pub mod terminal;
 

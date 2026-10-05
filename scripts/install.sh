@@ -16,12 +16,12 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 cd "$PROJECT_DIR"
-swift build -c release
+cargo build --release --locked
 mkdir -p -- "$INSTALL_DIR"
 STAGING=$(mktemp "$INSTALL_DIR/.ado.install.XXXXXX")
-install -m 0755 ".build/release/ado" "$STAGING"
+install -m 0755 "target/release/ado" "$STAGING"
 
-if command -v codesign >/dev/null 2>&1; then
+if [ "$(uname -s)" = "Darwin" ]; then
   codesign --force --sign - --identifier dev.ollies.ado-helper "$STAGING"
 fi
 
@@ -31,4 +31,6 @@ trap - EXIT HUP INT TERM
 
 printf '%s\n' "Installed ado at $DESTINATION"
 printf '%s\n' "Add $INSTALL_DIR to PATH if it is not already present."
-printf '%s\n' "The executable is ad-hoc signed. Upgrades can cause macOS Keychain to ask for access again."
+if [ "$(uname -s)" = "Darwin" ]; then
+  printf '%s\n' "The executable is ad-hoc signed. Upgrades can cause macOS Keychain to ask for access again."
+fi

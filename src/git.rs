@@ -109,6 +109,7 @@ impl AzureGitRemote {
             || !u.username().is_empty()
             || u.password().is_some()
             || u.port().is_some()
+            || explicit_port(raw)
             || u.query().is_some()
             || u.fragment().is_some()
             || u.path().trim_start_matches('/').contains("//")
@@ -566,4 +567,12 @@ fn home() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn explicit_port(value: &str) -> bool {
+    value
+        .split_once("://")
+        .and_then(|(_, rest)| rest.split(['/', '?', '#']).next())
+        .and_then(|authority| authority.rsplit('@').next())
+        .is_some_and(|host| host.contains(':'))
 }

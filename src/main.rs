@@ -331,7 +331,7 @@ impl Application {
                 "Unsupported, mismatched, or unsafe Azure Git remote.".into(),
             ));
         }
-        checkout.prepare(&info, path.map(PathBuf::from))
+        checkout.prepare(&info, path.map(standardize_path).transpose()?)
     }
     #[allow(clippy::too_many_arguments)]
     fn comment(
@@ -450,6 +450,28 @@ impl Application {
         write_json(&created)
     }
 }
+fn standardize_path(value: String) -> Result<PathBuf> {
+    use std::path::Component;
+    let path = PathBuf::from(value);
+    let absolute = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::RootDir | Component::Prefix(_) => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    Ok(normalized)
+}
+
 fn repository_identity(v: &Value) -> Result<RepositoryIdentity> {
     let repo = v.get("repository").ok_or_else(|| {
         Error("Azure DevOps pull request response is missing repository project and name.".into())

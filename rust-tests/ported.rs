@@ -618,6 +618,7 @@ fn rejects_untrusted_and_mismatched_remotes() {
         "git@github.com:acme/repo.git",
         "https://user@example.com/org/project/_git/repo",
         "https://dev.azure.com/acme//project/_git/repo",
+        "https://dev.azure.com:443/acme/project/_git/repo",
         "other@vs-ssh.visualstudio.com:v3/acme/project/repo",
     ] {
         assert!(AzureGitRemote::parse(v).is_err())

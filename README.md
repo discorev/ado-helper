@@ -1,12 +1,18 @@
 # ado helper
 
-`ado` is a small macOS command-line tool for Azure DevOps pull-request review. It stores PATs in the native Keychain, emits JSON for review data, and uses the SSH identity already configured for Git clones. It never passes a PAT to Git.
+`ado` is a small macOS and Linux command-line tool for Azure DevOps pull-request review. It stores PATs in the native credential store, emits JSON for review data, and uses the SSH identity already configured for Git clones. It never passes a PAT to Git.
 
-Requires macOS 13 or later and Swift 5.9. Build and test offline-capable code with:
+Requires Rust 1.91 or later. Build and test the offline-capable code with:
 
 ```sh
-swift build
-swift test
+cargo build
+cargo test
+```
+
+On Linux, a Secret Service provider such as GNOME Keyring must be installed, running, and unlocked. There is no plaintext credential fallback. To run the full suite in a Linux container, including a real Secret Service save/read/remove round-trip:
+
+```sh
+./scripts/test-linux.sh
 ```
 
 To install after reviewing the script:
@@ -15,7 +21,7 @@ To install after reviewing the script:
 ./scripts/install.sh
 ```
 
-This builds a release executable and installs it at `~/.local/bin/ado` with owner-only write permission. Set `ADO_INSTALL_DIR` to choose another bin directory. The script applies an ad-hoc signature with the fixed identifier `dev.ollies.ado-helper` when `codesign` is available. An upgrade changes the executable, so macOS may ask you to authorize Keychain access again.
+This builds a release executable and installs it at `~/.local/bin/ado` with owner-only write permission. Set `ADO_INSTALL_DIR` to choose another bin directory. On macOS, the script applies an ad-hoc signature with the fixed identifier `dev.ollies.ado-helper`. An upgrade changes the executable, so macOS may ask you to authorize Keychain access again.
 
 Create a profile interactively:
 
@@ -26,11 +32,11 @@ ado auth status
 ado auth update work
 ```
 
-The command opens the organization PAT form unless `--no-browser` is supplied, explains the required scopes, reads the PAT with hidden terminal input, verifies its identity, asks before saving, then stores it in Keychain. Profiles map organizations to identities; profile files contain no tokens. `auth status` only reads local profile metadata unless `--check` is supplied. `auth remove NAME` removes local profile and Keychain data; it does not revoke the PAT in Azure DevOps.
+The command opens the organization PAT form unless `--no-browser` is supplied, explains the required scopes, reads the PAT with hidden terminal input, verifies its identity, asks before saving, then stores it in macOS Keychain or Linux Secret Service. Profiles map organizations to identities; profile files contain no tokens. `auth status` only reads local profile metadata unless `--check` is supplied. `auth remove NAME` removes local profile and credential-store data; it does not revoke the PAT in Azure DevOps.
 
 Replace the placeholders with the organisation name from each ADO URL; one profile per organisation lets you use a different identity for each. Select **Code → Read** and **Pull Request Threads → Read & write** under custom scopes (use **Show all scopes**). No Azure subscription login or Azure CLI configuration is used. Setup verifies the account identity; it cannot attest to the scope selections you made in the browser. [Microsoft scope reference](https://learn.microsoft.com/en-us/azure/devops/integrate/get-started/authentication/oauth?view=azure-devops).
 
-Profile metadata is stored in `~/.config/ado/profiles.json`; PATs are stored only in the macOS login Keychain. The native executable is trusted for its own items; other executables remain subject to macOS Keychain approval. Install before adding profiles. Rebuilding or moving the executable can require renewed Keychain approval.
+Profile metadata is stored in `~/.config/ado/profiles.json`; PATs are stored only in the macOS login Keychain or Linux Secret Service. On macOS, the native executable is trusted for its own items; other executables remain subject to Keychain approval. Install before adding profiles. Rebuilding or moving the executable can require renewed Keychain approval on macOS.
 
 Review commands accept a full Azure DevOps PR URL, a PR number, or no target. A number uses `--profile NAME` when given and otherwise derives the organization from the current Azure Git remote. An omitted target finds the PR for the current branch. Examples:
 
@@ -60,7 +66,7 @@ The command checks that the commit and iteration are still current, the change I
 
 For automation and agents, successful `pr show`, `threads`, `changes`, `clone`, `diff`, and `comment` output JSON on stdout. Diagnostics go to stderr and failures return a nonzero exit status. Authentication and help remain human-readable and require an interactive terminal where secrets or confirmation are involved. Never parse diagnostics for data, and never place tokens in arguments or environment variables.
 
-The offline suite exercises mock ADO responses, credential-store failures and real temporary Git repositories. Live ADO permissions, organisation policy and Keychain approval must be verified during interactive setup; tests do not write real credentials or post review comments. This version reads PR metadata, changes and threads; build logs and policy evaluations are not yet exposed as commands.
+The offline suite exercises mock ADO responses, credential-store failures and real temporary Git repositories. The Linux container suite additionally exercises a real Secret Service round-trip. Live ADO permissions, organisation policy and credential-store approval must be verified during interactive setup; tests do not write real credentials or post review comments. This version reads PR metadata, changes and threads; build logs and policy evaluations are not yet exposed as commands.
 
 ## License
 

@@ -1,67 +1,102 @@
 use crate::{Error, Result, profiles::Profile};
 
 pub const SERVICE: &str = "dev.ollies.ado-helper.pat";
+
 pub trait CredentialStore {
     fn read(&self, profile: &Profile) -> Result<String>;
     fn save(&self, token: &str, profile: &Profile) -> Result<()>;
     fn remove(&self, profile: &Profile) -> Result<()>;
 }
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct KeychainStore;
+
 impl KeychainStore {
     pub fn account(profile: &Profile) -> String {
-        let o = profile.organization.name.to_ascii_lowercase();
+        let organization = profile.organization.name.to_ascii_lowercase();
         format!(
             "{}:{}{}:{}",
-            o.len(),
-            o,
+            organization.len(),
+            organization,
             profile.identity.id.len(),
             profile.identity.id
         )
     }
-    fn entry(profile: &Profile) -> Result<keyring::Entry> {
-        keyring::Entry::new(SERVICE, &Self::account(profile)).map_err(map_backend)
+
+    fn entry(profile: &Profile) -> keyring::Result<keyring::Entry> {
+        keyring::Entry::new(SERVICE, &Self::account(profile))
     }
 }
+
 impl CredentialStore for KeychainStore {
     fn read(&self, profile: &Profile) -> Result<String> {
-        let value=Self::entry(profile)?.get_password().map_err(|e|match e {keyring::Error::NoEntry=>Error("No Keychain token was found for this profile. Run 'ado auth update NAME' for the affected profile.".into()),other=>map_backend(other)})?;
+        let value = Self::entry(profile)
+            .map_err(|error| operation_error("read", error))?
+            .get_password()
+            .map_err(|error| match error {
+                keyring::Error::NoEntry => Error("No Keychain token was found for this profile. Run 'ado auth update NAME' for the affected profile.".into()),
+                keyring::Error::BadEncoding(_) => invalid_token_data(),
+                other => operation_error("read", other),
+            })?;
         if value.is_empty() {
-            Err(Error("The token stored in Keychain is not valid text. Run 'ado auth update NAME' for the affected profile.".into()))
+            Err(invalid_token_data())
         } else {
             Ok(value)
         }
     }
+
     fn save(&self, token: &str, profile: &Profile) -> Result<()> {
         if token.is_empty() {
-            return Err(Error("The token stored in Keychain is not valid text. Run 'ado auth update NAME' for the affected profile.".into()));
+            return Err(invalid_token_data());
         }
-        Self::entry(profile)?
+        Self::entry(profile)
+            .map_err(|error| operation_error("save", error))?
             .set_password(token)
-            .map_err(map_backend)
+            .map_err(|error| operation_error("save", error))
     }
+
     fn remove(&self, profile: &Profile) -> Result<()> {
-        match Self::entry(profile)?.delete_credential() {
+        match Self::entry(profile)
+            .map_err(|error| operation_error("remove", error))?
+            .delete_credential()
+        {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(map_backend(e)),
+            Err(error) => Err(operation_error("remove", error)),
         }
     }
 }
-fn map_backend(e: keyring::Error) -> Error {
+
+fn invalid_token_data() -> Error {
+    Error("The token stored in Keychain is not valid text. Run 'ado auth update NAME' for the affected profile.".into())
+}
+
+fn operation_error(operation: &str, error: keyring::Error) -> Error {
     #[cfg(target_os = "linux")]
     {
         Error(format!(
-            "Secret Service could not access the token ({e}). Ensure a Secret Service provider such as gnome-keyring is installed, running, and unlocked."
+            "Secret Service could not {operation} the token ({error}). Ensure a Secret Service provider such as gnome-keyring is installed, running, and unlocked."
         ))
     }
     #[cfg(target_os = "macos")]
     {
-        Error(format!("Keychain could not access the token ({e})."))
+        use std::error::Error as _;
+        let status = error
+            .source()
+            .and_then(|source| source.downcast_ref::<security_framework::base::Error>())
+            .map(|source| (*source).code());
+        match status {
+            Some(status) => Error(format!(
+                "Keychain could not {operation} the token (status {status})."
+            )),
+            None => Error(format!(
+                "Keychain could not {operation} the token ({error})."
+            )),
+        }
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         Error(format!(
-            "The system credential store could not access the token ({e})."
+            "The system credential store could not {operation} the token ({error})."
         ))
     }
 }

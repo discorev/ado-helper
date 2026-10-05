@@ -61,3 +61,7 @@ The command checks that the commit and iteration are still current, the change I
 For automation and agents, successful `pr show`, `threads`, `changes`, `clone`, `diff`, and `comment` output JSON on stdout. Diagnostics go to stderr and failures return a nonzero exit status. Authentication and help remain human-readable and require an interactive terminal where secrets or confirmation are involved. Never parse diagnostics for data, and never place tokens in arguments or environment variables.
 
 The offline suite exercises mock ADO responses, credential-store failures and real temporary Git repositories. Live ADO permissions, organisation policy and Keychain approval must be verified during interactive setup; tests do not write real credentials or post review comments. This version reads PR metadata, changes and threads; build logs and policy evaluations are not yet exposed as commands.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

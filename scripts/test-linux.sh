@@ -17,6 +17,6 @@ docker run --rm \
       export HOME=/tmp/ado-secret-service-home
       mkdir -p "$HOME/.local/share/keyrings"
       printf "%s" dummy-password | gnome-keyring-daemon --unlock --components=secrets >/tmp/keyring-environment
-      cargo test --locked --test ported secret_service_round_trip -- --ignored --exact
+      cargo test --locked --test integration_regression secret_service_round_trip -- --ignored --exact
     '\''
   '

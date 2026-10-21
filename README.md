@@ -21,7 +21,15 @@ To install after reviewing the script:
 ./scripts/install.sh
 ```
 
-This builds a release executable and installs it at `~/.local/bin/ado` with owner-only write permission. Set `ADO_INSTALL_DIR` to choose another bin directory. On macOS, the script applies an ad-hoc signature with the fixed identifier `dev.ollies.ado-helper`. An upgrade changes the executable, so macOS may ask you to authorize Keychain access again.
+This builds a release executable and installs it at `~/.local/bin/ado` with owner-only write permission. Set `ADO_INSTALL_DIR` to choose another bin directory. On macOS, the script uses the sole valid code-signing identity in Keychain and verifies the signature before replacing the installed binary. The identifier remains `dev.ollies.ado-helper`. If there are zero or multiple valid identities, it stops and asks you to select one explicitly:
+
+```sh
+ADO_CODESIGN_IDENTITY="Apple Development: Your Name (TEAMID)" ./scripts/install.sh
+```
+
+You can also supply the certificate SHA-1 shown by `security find-identity -v -p codesigning`. Use the same signing identity for future builds. Changing from ad-hoc signing to a certificate can require a one-time Keychain approval; subsequent builds retain the certificate-based designated identity. Ad-hoc signing is available only by explicitly setting `ADO_CODESIGN_IDENTITY=-` and can require approval again after each rebuild.
+
+Run the installer regression tests without accessing Keychain or compiling Rust with `python3 scripts/test-install.py`.
 
 Create a profile interactively:
 

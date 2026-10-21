@@ -666,7 +666,13 @@ fn validate_edit_target(
             "Only the authenticated user's own, undeleted comment may be edited.".into(),
         ));
     }
-    if comment.get("content").and_then(Value::as_str) != Some(expected) {
+    // Tolerate the single trailing newline that `echo` or `jq -r` add to the file.
+    let trimmed = expected
+        .strip_suffix("\r\n")
+        .or_else(|| expected.strip_suffix('\n'))
+        .unwrap_or(expected);
+    let content = comment.get("content").and_then(Value::as_str);
+    if content != Some(expected) && content != Some(trimmed) {
         return Err(Error(
             "The comment text changed; reread it and refresh --expected-body-file before editing."
                 .into(),
@@ -758,6 +764,16 @@ mod tests {
         );
         assert!(
             validate_edit_target(std::slice::from_ref(&thread), 7, 1, "ollie", "stale").is_err()
+        );
+        for expected in ["before\n", "before\r\n"] {
+            assert!(
+                validate_edit_target(std::slice::from_ref(&thread), 7, 1, "ollie", expected)
+                    .is_ok()
+            );
+        }
+        assert!(
+            validate_edit_target(std::slice::from_ref(&thread), 7, 1, "ollie", "before\n\n")
+                .is_err()
         );
         assert!(
             validate_edit_target(std::slice::from_ref(&thread), 8, 1, "ollie", "before").is_err()

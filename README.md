@@ -86,7 +86,7 @@ ado pr edit-comment 123 --thread-id 456 --comment-id 1 \
   --body-file /tmp/revised.txt --expected-body-file /tmp/original.txt
 ```
 
-The expected-body file must match the current saved text exactly, so an edit based on stale text is rejected. The command patches only that comment's content and verifies the saved result. It does not create a new thread or change its status. The expected-text check happens immediately before submission; it is not a server-side atomic compare-and-swap.
+The expected-body file must match the current saved text exactly, apart from one optional trailing newline, so an edit based on stale text is rejected. The command patches only that comment's content and verifies the saved result. It does not create a new thread or change its status. The expected-text check happens immediately before submission; it is not a server-side atomic compare-and-swap.
 
 For automation and agents, successful `pr show`, `threads`, `changes`, `clone`, `diff`, and `comment` output JSON on stdout. Diagnostics go to stderr and failures return a nonzero exit status. Authentication and help remain human-readable and require an interactive terminal where secrets or confirmation are involved. Never parse diagnostics for data, and never place tokens in arguments or environment variables.
 

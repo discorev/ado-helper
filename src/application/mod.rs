@@ -50,6 +50,27 @@ impl Application {
                 profile,
                 directory,
             } => self.pr_diff(target, profile.as_deref(), directory)?,
+            CliCommand::PrEditComment {
+                target,
+                profile,
+                thread_id,
+                comment_id,
+                body_file,
+                expected_body_file,
+            } => self.edit_comment(
+                target,
+                profile.as_deref(),
+                thread_id,
+                comment_id,
+                &body_file,
+                &expected_body_file,
+            )?,
+            CliCommand::PrTopLevelComment {
+                target,
+                profile,
+                body_file,
+                commit,
+            } => self.top_level_comment(target, profile.as_deref(), &body_file, &commit)?,
             CliCommand::PrComment {
                 target,
                 profile,

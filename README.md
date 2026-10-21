@@ -62,7 +62,23 @@ ado pr comment 123 \
   --iteration 4 --change-id 19
 ```
 
-The command checks that the commit and iteration are still current, the change ID belongs to the requested path, the requested side exists, and the line range fits the exact reviewed file version. It creates an inline thread only; there are no commands for top-level comments, votes, merges, or resolving threads.
+The command checks that the commit and iteration are still current, the change ID belongs to the requested path, the requested side exists, and the line range fits the exact reviewed file version. It creates an inline thread. For a PR-wide discussion, explicitly request a top-level comment instead:
+
+```sh
+ado pr comment 123 --top-level --body-file /tmp/comment.txt \
+  --commit 0123456789abcdef0123456789abcdef01234567
+```
+
+Top-level comments require the current source commit but no file or iteration context. Mixing `--top-level` with inline anchor options is rejected. Both modes verify the posting identity and read back the new thread; top-level verification checks the exact body, author and absence of a file anchor. If submission or verification is uncertain, inspect `ado pr threads` before retrying to avoid duplicates. Authentication stays inside `ado` using its native credential store; no external token extraction is needed. There are no commands for votes, merges, or resolving threads.
+
+Edit an existing comment authored by the authenticated account using its thread and comment IDs from `ado pr threads`:
+
+```sh
+ado pr edit-comment 123 --thread-id 456 --comment-id 1 \
+  --body-file /tmp/revised.txt --expected-body-file /tmp/original.txt
+```
+
+The expected-body file must match the current saved text exactly, so an edit based on stale text is rejected. The command patches only that comment's content and verifies the saved result. It does not create a new thread or change its status. The expected-text check happens immediately before submission; it is not a server-side atomic compare-and-swap.
 
 For automation and agents, successful `pr show`, `threads`, `changes`, `clone`, `diff`, and `comment` output JSON on stdout. Diagnostics go to stderr and failures return a nonzero exit status. Authentication and help remain human-readable and require an interactive terminal where secrets or confirmation are involved. Never parse diagnostics for data, and never place tokens in arguments or environment variables.
 

@@ -291,3 +291,99 @@ fn list_pull_requests_stops_repeating_full_page() {
     );
     assert_eq!(c.transport.count(), 2)
 }
+
+#[test]
+fn top_level_comment_has_no_inline_or_iteration_context() {
+    let m = Mock::new(|r, _| {
+        assert_eq!(r.method, "POST");
+        assert_eq!(
+            r.url.path(),
+            "/acme/Project/_apis/git/repositories/Repo/pullRequests/4/threads"
+        );
+        let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            body,
+            json!({"comments": [{"parentCommentId": 0, "content": "Scope?\n\nPlease align.", "commentType": 1}], "status": 1})
+        );
+        Ok(response(r, 200, &json!({"id": 123}), &[]))
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert_eq!(
+        c.create_top_level_thread("Project", "Repo", 4, "Scope?\n\nPlease align.")
+            .unwrap()["id"],
+        123
+    );
+    assert_eq!(c.transport.count(), 1);
+}
+
+#[test]
+fn top_level_comment_validates_input_without_sending() {
+    let m = Mock::new(|_, _| panic!("invalid comment must not be sent"));
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert!(
+        c.create_top_level_thread("Project", "Repo", 4, " \n ")
+            .is_err()
+    );
+    assert!(
+        c.create_top_level_thread("Project", "Repo", 0, "body")
+            .is_err()
+    );
+    assert!(c.create_top_level_thread("", "Repo", 4, "body").is_err());
+    assert_eq!(c.transport.count(), 0);
+}
+
+#[test]
+fn top_level_comment_failure_is_not_retried_or_leaked() {
+    let m = Mock::new(|r, _| {
+        Ok(HttpResponse {
+            status: 503,
+            url: r.url.clone(),
+            headers: HashMap::new(),
+            body: b"private token detail".to_vec(),
+        })
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    let error = c
+        .create_top_level_thread("Project", "Repo", 4, "body")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("503"));
+    assert!(!error.contains("private"));
+    assert_eq!(c.transport.count(), 1);
+}
+
+#[test]
+fn comment_edit_patches_only_content_at_exact_comment() {
+    let m = Mock::new(|r, _| {
+        assert_eq!(r.method, "PATCH");
+        assert_eq!(
+            r.url.path(),
+            "/acme/Project/_apis/git/repositories/Repo/pullRequests/4/threads/7/comments/1"
+        );
+        let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+        assert_eq!(body, json!({"content": "revised"}));
+        Ok(response(
+            r,
+            200,
+            &json!({"id": 1, "content": "revised"}),
+            &[],
+        ))
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert!(
+        c.update_comment("Project", "Repo", 4, 0, 1, "revised")
+            .is_err()
+    );
+    assert!(
+        c.update_comment("Project", "Repo", 4, 7, 0, "revised")
+            .is_err()
+    );
+    assert!(c.update_comment("Project", "Repo", 4, 7, 1, " ").is_err());
+    assert_eq!(c.transport.count(), 0);
+    assert_eq!(
+        c.update_comment("Project", "Repo", 4, 7, 1, "revised")
+            .unwrap()["content"],
+        "revised"
+    );
+    assert_eq!(c.transport.count(), 1);
+}

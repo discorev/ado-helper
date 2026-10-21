@@ -336,6 +336,58 @@ impl<T: HttpTransport> AdoClient<T> {
         }
         Ok(results)
     }
+    pub fn update_comment(
+        &self,
+        project: &str,
+        repo: &str,
+        id: i64,
+        thread_id: i64,
+        comment_id: i64,
+        body: &str,
+    ) -> Result<Value> {
+        self.validate_resource(project, repo, id)?;
+        if thread_id <= 0 || comment_id <= 0 || body.trim().is_empty() {
+            return Err(Error(
+                "Comment edit requires positive thread/comment IDs and nonempty text.".into(),
+            ));
+        }
+        self.send_object(
+            "PATCH",
+            &[
+                project,
+                "_apis",
+                "git",
+                "repositories",
+                repo,
+                "pullRequests",
+                &id.to_string(),
+                "threads",
+                &thread_id.to_string(),
+                "comments",
+                &comment_id.to_string(),
+            ],
+            &json!({"content": body}),
+        )
+    }
+
+    pub fn create_top_level_thread(
+        &self,
+        project: &str,
+        repo: &str,
+        id: i64,
+        body: &str,
+    ) -> Result<Value> {
+        self.validate_resource(project, repo, id)?;
+        if body.trim().is_empty() {
+            return Err(Error("Comment body must not be empty.".into()));
+        }
+        self.send_object(
+            "POST",
+            &[project, "_apis", "git", "repositories", repo, "pullRequests", &id.to_string(), "threads"],
+            &json!({"comments": [{"parentCommentId": 0, "content": body, "commentType": 1}], "status": 1}),
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn create_thread(
         &self,

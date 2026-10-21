@@ -48,6 +48,20 @@ pub enum CliCommand {
         profile: Option<String>,
         directory: Option<String>,
     },
+    PrEditComment {
+        target: PullRequestTarget,
+        profile: Option<String>,
+        thread_id: i64,
+        comment_id: i64,
+        body_file: String,
+        expected_body_file: String,
+    },
+    PrTopLevelComment {
+        target: PullRequestTarget,
+        profile: Option<String>,
+        body_file: String,
+        commit: String,
+    },
     PrComment {
         target: PullRequestTarget,
         profile: Option<String>,
@@ -84,6 +98,7 @@ pub fn parse(arguments: &[String]) -> Result<CliCommand> {
         ("pr", "clone") => parse_checkout(args, true),
         ("pr", "diff") => parse_checkout(args, false),
         ("pr", "comment") => parse_comment(args),
+        ("pr", "edit-comment") => parse_edit_comment(args),
         _ => Err(Error(format!(
             "Unknown command '{} {}'. Run 'ado help' for usage.",
             group, arguments[1]
@@ -291,6 +306,38 @@ fn parse_checkout(args: &[String], clone: bool) -> Result<CliCommand> {
     }
 }
 fn parse_comment(args: &[String]) -> Result<CliCommand> {
+    let top_level = args
+        .iter()
+        .filter(|arg| arg.as_str() == "--top-level")
+        .count();
+    if top_level > 1 {
+        return Err(Error(
+            "Option '--top-level' may only be specified once.".into(),
+        ));
+    }
+    if top_level == 1 {
+        let args: Vec<String> = args
+            .iter()
+            .filter(|arg| arg.as_str() != "--top-level")
+            .cloned()
+            .collect();
+        let mut v = common(&args, &["--profile", "--body-file", "--commit"])?;
+        let target = v.target()?;
+        let profile = v.take("--profile");
+        let body_file = v.required("--body-file")?;
+        let commit = v.required("--commit")?;
+        if !is_commit_sha(&commit) {
+            return Err(Error(
+                "--commit must be a 40-character hexadecimal commit SHA.".into(),
+            ));
+        }
+        return Ok(CliCommand::PrTopLevelComment {
+            target,
+            profile,
+            body_file,
+            commit,
+        });
+    }
     let mut v = common(
         args,
         &[
@@ -339,5 +386,26 @@ fn parse_comment(args: &[String]) -> Result<CliCommand> {
         commit,
         iteration,
         change_id,
+    })
+}
+
+fn parse_edit_comment(args: &[String]) -> Result<CliCommand> {
+    let mut v = common(
+        args,
+        &[
+            "--profile",
+            "--thread-id",
+            "--comment-id",
+            "--body-file",
+            "--expected-body-file",
+        ],
+    )?;
+    Ok(CliCommand::PrEditComment {
+        target: v.target()?,
+        profile: v.take("--profile"),
+        thread_id: v.required_positive("--thread-id")?,
+        comment_id: v.required_positive("--comment-id")?,
+        body_file: v.required("--body-file")?,
+        expected_body_file: v.required("--expected-body-file")?,
     })
 }

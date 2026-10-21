@@ -241,6 +241,92 @@ impl Application {
         }
         checkout.prepare(&info, path.map(standardize_path).transpose()?)
     }
+    pub(super) fn edit_comment(
+        &self,
+        target: PullRequestTarget,
+        profile_name: Option<&str>,
+        thread_id: i64,
+        comment_id: i64,
+        body_file: &str,
+        expected_body_file: &str,
+    ) -> Result<()> {
+        let r = self.resolve(target, profile_name)?;
+        let repo = repository_identity(&r.pull_request)?;
+        let body = read_body(body_file)?;
+        let expected = read_body(expected_body_file)?;
+        let posting = r.client.identity()?;
+        if posting.id != r.profile.identity.id {
+            return Err(Error(
+                "The saved token authenticated as a different account. No comment was edited."
+                    .into(),
+            ));
+        }
+        let threads = r
+            .client
+            .threads(&repo.project, &repo.repository, r.locator.id)?;
+        validate_edit_target(&threads, thread_id, comment_id, &posting.id, &expected)?;
+        let updated = r.client.update_comment(&repo.project, &repo.repository, r.locator.id, thread_id, comment_id, &body)
+            .map_err(|e| Error(format!("Comment edit was not confirmed: {e}. Inspect thread {thread_id} before retrying; the request may have reached Azure DevOps.")))?;
+        let verify = (|| {
+            let threads = r
+                .client
+                .threads(&repo.project, &repo.repository, r.locator.id)?;
+            validate_edit_target(&threads, thread_id, comment_id, &posting.id, &body)
+        })();
+        if let Err(e) = verify {
+            return Err(Error(format!(
+                "Comment {comment_id} in thread {thread_id} was edited, but verification failed: {e}. Inspect that thread before retrying."
+            )));
+        }
+        write_json(&updated)
+    }
+
+    pub(super) fn top_level_comment(
+        &self,
+        target: PullRequestTarget,
+        profile_name: Option<&str>,
+        body_file: &str,
+        commit: &str,
+    ) -> Result<()> {
+        let r = self.resolve(target, profile_name)?;
+        let repo = repository_identity(&r.pull_request)?;
+        let body = read_body(body_file)?;
+        let posting = r.client.identity()?;
+        if posting.id != r.profile.identity.id {
+            return Err(Error(format!(
+                "The saved token authenticated as a different account. No comment was posted; run 'ado auth update {}'.",
+                r.profile.name
+            )));
+        }
+        verify_source_commit(&r.pull_request, commit)?;
+        let ready = r.client.pull_request(r.locator.id)?;
+        verify_source_commit(&ready, commit)?;
+        let created = r.client.create_top_level_thread(&repo.project, &repo.repository, r.locator.id, &body)
+            .map_err(|e| Error(format!("Comment submission was not confirmed: {e} Inspect PR threads before retrying; the request may have reached Azure DevOps.")))?;
+        let Some(thread_id) = created.get("id").and_then(integer).filter(|id| *id > 0) else {
+            return Err(Error("The top-level comment was created, but Azure DevOps returned no thread ID. Do not retry automatically; inspect the pull request threads first.".into()));
+        };
+        let verify = (|| {
+            validate_top_level_thread(&created, thread_id, &body, &posting.id)?;
+            let threads = r
+                .client
+                .threads(&repo.project, &repo.repository, r.locator.id)?;
+            let thread = threads
+                .iter()
+                .find(|thread| thread.get("id").and_then(integer) == Some(thread_id))
+                .ok_or_else(|| {
+                    Error("the new thread was absent from the immediate readback".into())
+                })?;
+            validate_top_level_thread(thread, thread_id, &body, &posting.id)
+        })();
+        if let Err(e) = verify {
+            return Err(Error(format!(
+                "Top-level comment thread {thread_id} was created, but verification failed: {e}. Do not retry automatically; inspect that thread first."
+            )));
+        }
+        write_json(&created)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn comment(
         &self,
@@ -554,6 +640,64 @@ fn change_path(v: &Value, side: &str) -> Option<String> {
         format!("/{p}")
     })
 }
+fn validate_edit_target(
+    threads: &[Value],
+    thread_id: i64,
+    comment_id: i64,
+    author: &str,
+    expected: &str,
+) -> Result<()> {
+    let comment = threads
+        .iter()
+        .find(|t| {
+            t.get("id").and_then(integer) == Some(thread_id)
+                && t.get("isDeleted").and_then(Value::as_bool) != Some(true)
+        })
+        .and_then(|t| t.get("comments").and_then(Value::as_array))
+        .and_then(|cs| {
+            cs.iter()
+                .find(|c| c.get("id").and_then(integer) == Some(comment_id))
+        })
+        .ok_or_else(|| Error("The requested comment was not found.".into()))?;
+    if comment.pointer("/author/id").and_then(Value::as_str) != Some(author)
+        || comment.get("isDeleted").and_then(Value::as_bool) == Some(true)
+    {
+        return Err(Error(
+            "Only the authenticated user's own, undeleted comment may be edited.".into(),
+        ));
+    }
+    if comment.get("content").and_then(Value::as_str) != Some(expected) {
+        return Err(Error(
+            "The comment text changed; reread it and refresh --expected-body-file before editing."
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_top_level_thread(v: &Value, id: i64, body: &str, author: &str) -> Result<()> {
+    let comments = v.get("comments").and_then(Value::as_array);
+    if v.get("id").and_then(integer) == Some(id)
+        && v.get("threadContext").is_none_or(Value::is_null)
+        && v.get("pullRequestThreadContext").is_none_or(Value::is_null)
+        && v.get("isDeleted").and_then(Value::as_bool) != Some(true)
+        && comments.is_some_and(|comments| {
+            comments.iter().any(|comment| {
+                comment.get("content").and_then(Value::as_str) == Some(body)
+                    && comment.pointer("/author/id").and_then(Value::as_str) == Some(author)
+                    && comment.get("parentCommentId").and_then(integer) == Some(0)
+                    && comment.get("isDeleted").and_then(Value::as_bool) != Some(true)
+            })
+        })
+    {
+        Ok(())
+    } else {
+        Err(Error(
+            "thread readback did not match the requested top-level comment, body and author".into(),
+        ))
+    }
+}
+
 fn validate_thread(v: &Value, id: i64, path: &str, line: i64, end: i64, side: &str) -> Result<()> {
     if v.get("id").and_then(integer) == Some(id)
         && v.pointer("/threadContext/filePath").and_then(Value::as_str) == Some(path)
@@ -575,6 +719,59 @@ fn validate_thread(v: &Value, id: i64, path: &str, line: i64, end: i64, side: &s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn top_level_readback_checks_content_author_and_placement() {
+        let thread = json!({"id": 7, "comments": [{"content": "Scope?", "author": {"id": "ollie"}, "parentCommentId": 0}]});
+        assert!(validate_top_level_thread(&thread, 7, "Scope?", "ollie").is_ok());
+        assert!(validate_top_level_thread(&thread, 8, "Scope?", "ollie").is_err());
+        assert!(validate_top_level_thread(&thread, 7, "other", "ollie").is_err());
+        assert!(validate_top_level_thread(&thread, 7, "Scope?", "other").is_err());
+        for (pointer, value) in [
+            ("/threadContext", json!({"filePath": "/file"})),
+            ("/pullRequestThreadContext", json!({"changeTrackingId": 1})),
+            ("/isDeleted", json!(true)),
+        ] {
+            let mut invalid = thread.clone();
+            invalid[pointer.trim_start_matches('/')] = value;
+            assert!(validate_top_level_thread(&invalid, 7, "Scope?", "ollie").is_err());
+        }
+        let mut reply = thread.clone();
+        reply["comments"][0]["parentCommentId"] = json!(1);
+        assert!(validate_top_level_thread(&reply, 7, "Scope?", "ollie").is_err());
+        let mut deleted = thread.clone();
+        deleted["comments"][0]["isDeleted"] = json!(true);
+        assert!(validate_top_level_thread(&deleted, 7, "Scope?", "ollie").is_err());
+        let mut null_context = thread;
+        null_context["threadContext"] = Value::Null;
+        assert!(validate_top_level_thread(&null_context, 7, "Scope?", "ollie").is_ok());
+    }
+
+    #[test]
+    fn edits_require_own_undeleted_comment_and_expected_text() {
+        let thread = json!({"id": 7, "comments": [{"id": 1, "content": "before", "author": {"id": "ollie"}}]});
+        assert!(
+            validate_edit_target(std::slice::from_ref(&thread), 7, 1, "ollie", "before").is_ok()
+        );
+        assert!(
+            validate_edit_target(std::slice::from_ref(&thread), 7, 1, "other", "before").is_err()
+        );
+        assert!(
+            validate_edit_target(std::slice::from_ref(&thread), 7, 1, "ollie", "stale").is_err()
+        );
+        assert!(
+            validate_edit_target(std::slice::from_ref(&thread), 8, 1, "ollie", "before").is_err()
+        );
+        assert!(
+            validate_edit_target(std::slice::from_ref(&thread), 7, 2, "ollie", "before").is_err()
+        );
+        let mut deleted = thread.clone();
+        deleted["comments"][0]["isDeleted"] = json!(true);
+        assert!(validate_edit_target(&[deleted], 7, 1, "ollie", "before").is_err());
+        let mut deleted = thread;
+        deleted["isDeleted"] = json!(true);
+        assert!(validate_edit_target(&[deleted], 7, 1, "ollie", "before").is_err());
+    }
 
     #[test]
     fn explicit_iteration_does_not_evaluate_latest_iteration() {

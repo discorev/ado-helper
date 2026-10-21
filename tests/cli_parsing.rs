@@ -117,3 +117,139 @@ fn auth_grammar() {
     assert!(cli::parse(&svec(&["auth", "add", "work"])).is_err());
     assert!(cli::parse(&svec(&["auth", "add", "work", "--org", "a", "--org", "b"])).is_err())
 }
+
+#[test]
+fn parses_top_level_comment_without_file_anchor() {
+    let commit = "a".repeat(40);
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "comment",
+            "42",
+            "--top-level",
+            "--profile",
+            "work",
+            "--body-file",
+            "/tmp/body",
+            "--commit",
+            &commit
+        ]))
+        .unwrap(),
+        CliCommand::PrTopLevelComment {
+            target: PullRequestTarget::Number(42),
+            profile: Some("work".into()),
+            body_file: "/tmp/body".into(),
+            commit: commit.clone()
+        }
+    );
+    assert!(matches!(
+        cli::parse(&svec(&[
+            "pr",
+            "comment",
+            "--top-level",
+            "--body-file",
+            "/tmp/body",
+            "--commit",
+            &commit
+        ]))
+        .unwrap(),
+        CliCommand::PrTopLevelComment {
+            target: PullRequestTarget::CurrentBranch,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn top_level_comment_rejects_missing_identity_and_mixed_anchors() {
+    let commit = "a".repeat(40);
+    let base = svec(&[
+        "pr",
+        "comment",
+        "42",
+        "--top-level",
+        "--body-file",
+        "/tmp/body",
+        "--commit",
+        &commit,
+    ]);
+    for (option, value) in [
+        ("--file", "/file"),
+        ("--line", "1"),
+        ("--end-line", "2"),
+        ("--side", "right"),
+        ("--iteration", "1"),
+        ("--change-id", "1"),
+    ] {
+        let mut args = base.clone();
+        args.extend(svec(&[option, value]));
+        assert!(cli::parse(&args).is_err(), "accepted {option}");
+    }
+    assert!(
+        cli::parse(&svec(&[
+            "pr",
+            "comment",
+            "--top-level",
+            "--body-file",
+            "/tmp/body"
+        ]))
+        .is_err()
+    );
+    assert!(
+        cli::parse(&svec(&[
+            "pr",
+            "comment",
+            "--top-level",
+            "--commit",
+            &commit
+        ]))
+        .is_err()
+    );
+    assert!(
+        cli::parse(&svec(&[
+            "pr",
+            "comment",
+            "--top-level",
+            "--body-file",
+            "/tmp/body",
+            "--commit",
+            "invalid"
+        ]))
+        .is_err()
+    );
+    let mut duplicate = base;
+    duplicate.push("--top-level".into());
+    assert!(cli::parse(&duplicate).is_err());
+}
+
+#[test]
+fn parses_comment_edit_and_requires_expected_body() {
+    let args = svec(&[
+        "pr",
+        "edit-comment",
+        "42",
+        "--thread-id",
+        "7",
+        "--comment-id",
+        "1",
+        "--body-file",
+        "/tmp/new",
+        "--expected-body-file",
+        "/tmp/old",
+    ]);
+    assert_eq!(
+        cli::parse(&args).unwrap(),
+        CliCommand::PrEditComment {
+            target: PullRequestTarget::Number(42),
+            profile: None,
+            thread_id: 7,
+            comment_id: 1,
+            body_file: "/tmp/new".into(),
+            expected_body_file: "/tmp/old".into()
+        }
+    );
+    assert!(cli::parse(&args[..args.len() - 2]).is_err());
+    let mut zero = args.clone();
+    zero[4] = "0".into();
+    assert!(cli::parse(&zero).is_err());
+}

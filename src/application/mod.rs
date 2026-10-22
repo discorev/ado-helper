@@ -1,6 +1,7 @@
 mod auth;
 mod output;
 mod pull_requests;
+mod work_items;
 
 use crate::HELP;
 use ado_core::{Result, cli::CliCommand, keychain::KeychainStore, profiles::ProfileStore};
@@ -32,6 +33,7 @@ impl Application {
             CliCommand::AuthStatus { check } => self.auth_status(check)?,
             CliCommand::AuthRemove { name } => self.auth_remove(&name)?,
             CliCommand::PrShow { target, profile } => self.pr_show(target, profile.as_deref())?,
+            CliCommand::PrOpen { target, profile } => self.pr_open(target, profile.as_deref())?,
             CliCommand::PrThreads { target, profile } => {
                 self.pr_threads(target, profile.as_deref())?
             }
@@ -94,6 +96,69 @@ impl Application {
                 iteration,
                 change_id,
             )?,
+            CliCommand::WiQuery {
+                query,
+                top,
+                profile,
+                project,
+            } => self.wi_query(query, top, profile.as_deref(), project.as_deref())?,
+            CliCommand::WiShow {
+                id,
+                profile,
+                project,
+            } => self.wi_show(id, profile.as_deref(), project.as_deref())?,
+            CliCommand::WiComments {
+                id,
+                profile,
+                project,
+            } => self.wi_comments(id, profile.as_deref(), project.as_deref())?,
+            CliCommand::WiComment {
+                id,
+                body_file,
+                profile,
+                project,
+            } => self.wi_comment(id, &body_file, profile.as_deref(), project.as_deref())?,
+            CliCommand::WiCreate {
+                work_item_type,
+                title,
+                description_file,
+                assign_to,
+                tags,
+                profile,
+                project,
+            } => self.wi_create(
+                &work_item_type,
+                &title,
+                description_file.as_deref(),
+                assign_to.as_deref(),
+                tags.as_deref(),
+                profile.as_deref(),
+                project.as_deref(),
+            )?,
+            CliCommand::WiUpdate {
+                id,
+                state,
+                title,
+                assign_to,
+                tags,
+                description_file,
+                profile,
+                project,
+            } => self.wi_update(
+                id,
+                state.as_deref(),
+                title.as_deref(),
+                assign_to.as_deref(),
+                tags.as_deref(),
+                description_file.as_deref(),
+                profile.as_deref(),
+                project.as_deref(),
+            )?,
+            CliCommand::WiOpen {
+                id,
+                profile,
+                project,
+            } => self.wi_open(id, profile.as_deref(), project.as_deref())?,
         }
         Ok(())
     }

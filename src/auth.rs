@@ -198,7 +198,7 @@ pub fn pat_settings_url(org: &Organization) -> String {
 }
 pub fn scope_instructions(org: &Organization) -> String {
     format!(
-        "Create an organization-scoped, short-lived PAT for {}:\n  Required: Code — Read (vso.code)\n  Required: PR threads — Read & write (vso.threads_full; use \"Show all scopes\")\n  Not needed by current ado commands: Build — Read (vso.build)\nDo not choose Full access or Code read/write. If \"PR threads\" is unavailable,\ncheck your organization policy with an administrator rather than broadening the token.\nToken settings: {}",
+        "Create an organization-scoped, short-lived PAT for {}:\n  Required: Code — Read (vso.code)\n  Required: PR threads — Read & write (vso.threads_full; use \"Show all scopes\")\n  Required: Work Items — Read & write (vso.work_write)\n  Not needed by current ado commands: Build — Read (vso.build)\nDo not choose Full access or Code read/write. If a required scope is unavailable,\ncheck your organization policy with an administrator rather than broadening the token.\nToken settings: {}",
         org.name,
         pat_settings_url(org)
     )

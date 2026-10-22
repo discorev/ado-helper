@@ -151,6 +151,13 @@ impl AzureGitRemote {
         }
         Ok(p)
     }
+    pub fn discover<R: GitRunning>(runner: &R, directory: Option<&Path>) -> Result<Self> {
+        let branch = runner
+            .run(&s(&["rev-parse", "--abbrev-ref", "HEAD"]), directory)
+            .ok()
+            .filter(|branch| !branch.is_empty() && branch != "HEAD");
+        discover_remote(runner, directory, branch.as_deref())
+    }
 }
 fn parse_scp(raw: &str, tail: &str, legacy: Option<&str>) -> Result<AzureGitRemote> {
     if tail.contains([':', '?', '#']) {
@@ -243,57 +250,62 @@ impl LocalGitContext {
                 "The current repository is in detached HEAD state.".into(),
             ));
         }
-        let names = runner.run(&s(&["remote"]), directory).unwrap_or_default();
-        let mut supported = Vec::new();
-        for name in names.lines() {
-            if let Ok(url) =
-                runner.run(&["remote".into(), "get-url".into(), name.into()], directory)
-                && let Ok(r) = AzureGitRemote::parse(&url)
-            {
-                supported.push((name.to_owned(), r));
-            }
+        let remote = discover_remote(runner, directory, Some(&branch))?;
+        Ok(Self { remote, branch })
+    }
+}
+
+fn discover_remote<R: GitRunning>(
+    runner: &R,
+    directory: Option<&Path>,
+    branch: Option<&str>,
+) -> Result<AzureGitRemote> {
+    let names = runner.run(&s(&["remote"]), directory).unwrap_or_default();
+    let mut supported = Vec::new();
+    for name in names.lines() {
+        if let Ok(url) = runner.run(&["remote".into(), "get-url".into(), name.into()], directory)
+            && let Ok(remote) = AzureGitRemote::parse(&url)
+        {
+            supported.push((name.to_owned(), remote));
         }
-        if let Ok(up) = runner.run(
+    }
+    if let Some(branch) = branch
+        && let Ok(upstream) = runner.run(
             &[
                 "config".into(),
                 "--get".into(),
                 format!("branch.{branch}.remote"),
             ],
             directory,
-        ) && up != "."
-        {
-            if let Some((_, r)) = supported.iter().find(|(n, _)| n == &up) {
-                return Ok(Self {
-                    remote: r.clone(),
-                    branch,
-                });
-            }
-            return Err(invalid_remote());
-        }
-        let ids: HashSet<String> = supported
+        )
+        && upstream != "."
+    {
+        return supported
             .iter()
-            .map(|(_, r)| {
-                format!(
-                    "{}\0{}\0{}",
-                    r.organization.to_ascii_lowercase(),
-                    r.project.to_ascii_lowercase(),
-                    r.repository.to_ascii_lowercase()
-                )
-            })
-            .collect();
-        if ids.len() > 1 {
-            return Err(invalid_remote());
-        }
-        let selected = supported
-            .iter()
-            .find(|(n, _)| n == "origin")
-            .or_else(|| supported.first())
-            .ok_or_else(invalid_remote)?;
-        Ok(Self {
-            remote: selected.1.clone(),
-            branch,
-        })
+            .find(|(name, _)| name == &upstream)
+            .map(|(_, remote)| remote.clone())
+            .ok_or_else(invalid_remote);
     }
+    let identities: HashSet<String> = supported
+        .iter()
+        .map(|(_, remote)| {
+            format!(
+                "{}\0{}\0{}",
+                remote.organization.to_ascii_lowercase(),
+                remote.project.to_ascii_lowercase(),
+                remote.repository.to_ascii_lowercase()
+            )
+        })
+        .collect();
+    if identities.len() > 1 {
+        return Err(invalid_remote());
+    }
+    supported
+        .iter()
+        .find(|(name, _)| name == "origin")
+        .or_else(|| supported.first())
+        .map(|(_, remote)| remote.clone())
+        .ok_or_else(invalid_remote)
 }
 fn s(values: &[&str]) -> Vec<String> {
     values.iter().map(|x| (*x).into()).collect()

@@ -11,6 +11,8 @@ use std::{
 };
 use url::Url;
 
+mod work_items;
+
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
     pub method: String,
@@ -489,7 +491,15 @@ impl<T: HttpTransport> AdoClient<T> {
         query: &[(&str, &str)],
         api: bool,
     ) -> Result<(Value, HttpResponse)> {
-        let req = self.make_request("GET", path, query, api)?;
+        self.get_object_response_version(path, query, api.then_some("7.1"))
+    }
+    fn get_object_response_version(
+        &self,
+        path: &[&str],
+        query: &[(&str, &str)],
+        api_version: Option<&str>,
+    ) -> Result<(Value, HttpResponse)> {
+        let req = self.make_request_version("GET", path, query, api_version)?;
         let res = self.perform(&req)?;
         let obj = serde_json::from_slice::<Value>(&res.body).map_err(|_| invalid_response())?;
         if !obj.is_object() {
@@ -498,9 +508,20 @@ impl<T: HttpTransport> AdoClient<T> {
         Ok((obj, res))
     }
     fn send_object(&self, method: &str, path: &[&str], body: &Value) -> Result<Value> {
-        let mut req = self.make_request(method, path, &[], true)?;
+        self.send_object_options(method, path, &[], body, Some("7.1"), "application/json")
+    }
+    fn send_object_options(
+        &self,
+        method: &str,
+        path: &[&str],
+        query: &[(&str, &str)],
+        body: &Value,
+        api_version: Option<&str>,
+        content_type: &str,
+    ) -> Result<Value> {
+        let mut req = self.make_request_version(method, path, query, api_version)?;
         req.headers
-            .insert("Content-Type".into(), "application/json".into());
+            .insert("Content-Type".into(), content_type.into());
         req.body = Some(serde_json::to_vec(body).map_err(|_| invalid_request())?);
         let res = self.perform(&req)?;
         let obj = serde_json::from_slice::<Value>(&res.body).map_err(|_| invalid_response())?;
@@ -517,6 +538,15 @@ impl<T: HttpTransport> AdoClient<T> {
         query: &[(&str, &str)],
         api: bool,
     ) -> Result<HttpRequest> {
+        self.make_request_version(method, path, query, api.then_some("7.1"))
+    }
+    fn make_request_version(
+        &self,
+        method: &str,
+        path: &[&str],
+        query: &[(&str, &str)],
+        api_version: Option<&str>,
+    ) -> Result<HttpRequest> {
         let mut url = Url::parse("https://dev.azure.com").map_err(|_| invalid_request())?;
         {
             let mut ps = url.path_segments_mut().map_err(|_| invalid_request())?;
@@ -530,8 +560,8 @@ impl<T: HttpTransport> AdoClient<T> {
             for (k, v) in query {
                 qp.append_pair(k, v);
             }
-            if api {
-                qp.append_pair("api-version", "7.1");
+            if let Some(version) = api_version {
+                qp.append_pair("api-version", version);
             }
         }
         let mut headers = HashMap::new();

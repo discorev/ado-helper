@@ -8,6 +8,12 @@ pub enum PullRequestTarget {
     Url(String),
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkItemQuery {
+    Wiql(String),
+    WiqlFile(String),
+    Search(String),
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
     Help,
     AuthAdd {
@@ -26,6 +32,10 @@ pub enum CliCommand {
         name: String,
     },
     PrShow {
+        target: PullRequestTarget,
+        profile: Option<String>,
+    },
+    PrOpen {
         target: PullRequestTarget,
         profile: Option<String>,
     },
@@ -74,6 +84,52 @@ pub enum CliCommand {
         iteration: i64,
         change_id: i64,
     },
+    WiQuery {
+        query: WorkItemQuery,
+        top: i64,
+        profile: Option<String>,
+        project: Option<String>,
+    },
+    WiShow {
+        id: i64,
+        profile: Option<String>,
+        project: Option<String>,
+    },
+    WiComments {
+        id: i64,
+        profile: Option<String>,
+        project: Option<String>,
+    },
+    WiComment {
+        id: i64,
+        body_file: String,
+        profile: Option<String>,
+        project: Option<String>,
+    },
+    WiCreate {
+        work_item_type: String,
+        title: String,
+        description_file: Option<String>,
+        assign_to: Option<String>,
+        tags: Option<String>,
+        profile: Option<String>,
+        project: Option<String>,
+    },
+    WiUpdate {
+        id: i64,
+        state: Option<String>,
+        title: Option<String>,
+        assign_to: Option<String>,
+        tags: Option<String>,
+        description_file: Option<String>,
+        profile: Option<String>,
+        project: Option<String>,
+    },
+    WiOpen {
+        id: i64,
+        profile: Option<String>,
+        project: Option<String>,
+    },
 }
 
 pub fn parse(arguments: &[String]) -> Result<CliCommand> {
@@ -93,12 +149,20 @@ pub fn parse(arguments: &[String]) -> Result<CliCommand> {
         ("auth", "status") => parse_auth_status(args),
         ("auth", "remove") => parse_auth_remove(args),
         ("pr", "show") => parse_simple(args, true),
+        ("pr", "open") => parse_pr_open(args),
         ("pr", "threads") => parse_simple(args, false),
         ("pr", "changes") => parse_changes(args),
         ("pr", "clone") => parse_checkout(args, true),
         ("pr", "diff") => parse_checkout(args, false),
         ("pr", "comment") => parse_comment(args),
         ("pr", "edit-comment") => parse_edit_comment(args),
+        ("wi", "query") => parse_wi_query(args),
+        ("wi", "show") => parse_wi_id(args, "show"),
+        ("wi", "comments") => parse_wi_id(args, "comments"),
+        ("wi", "comment") => parse_wi_comment(args),
+        ("wi", "create") => parse_wi_create(args),
+        ("wi", "update") => parse_wi_update(args),
+        ("wi", "open") => parse_wi_id(args, "open"),
         _ => Err(Error(format!(
             "Unknown command '{} {}'. Run 'ado help' for usage.",
             group, arguments[1]
@@ -213,7 +277,7 @@ fn common(args: &[String], allowed: &[&str]) -> Result<Values> {
         } else {
             if r.positional.is_some() {
                 return Err(Error(
-                    "Only one pull request target may be specified.".into(),
+                    "Only one positional argument may be specified.".into(),
                 ));
             }
             r.positional = Some(v.clone());
@@ -245,7 +309,7 @@ impl Values {
     fn required(&mut self, n: &str) -> Result<String> {
         self.take(n)
             .filter(|v| !v.is_empty())
-            .ok_or_else(|| Error(format!("pr comment requires {n} VALUE.")))
+            .ok_or_else(|| Error(format!("Option '{n}' is required and must have a value.")))
     }
     fn positive(&mut self, n: &str) -> Result<Option<i64>> {
         let Some(v) = self.take(n) else {
@@ -262,7 +326,7 @@ impl Values {
     }
     fn required_positive(&mut self, n: &str) -> Result<i64> {
         self.positive(n)?
-            .ok_or_else(|| Error(format!("pr comment requires {n} N.")))
+            .ok_or_else(|| Error(format!("Option '{n}' is required.")))
     }
 }
 fn parse_simple(args: &[String], show: bool) -> Result<CliCommand> {
@@ -275,6 +339,17 @@ fn parse_simple(args: &[String], show: bool) -> Result<CliCommand> {
         Ok(CliCommand::PrThreads { target, profile })
     }
 }
+fn parse_pr_open(args: &[String]) -> Result<CliCommand> {
+    let mut v = common(args, &["--profile"])?;
+    if v.positional.is_none() {
+        return Err(Error("pr open requires a pull request ID or URL.".into()));
+    }
+    Ok(CliCommand::PrOpen {
+        target: v.target()?,
+        profile: v.take("--profile"),
+    })
+}
+
 fn parse_changes(args: &[String]) -> Result<CliCommand> {
     let mut v = common(args, &["--profile", "--iteration"])?;
     let target = v.target()?;
@@ -408,4 +483,165 @@ fn parse_edit_comment(args: &[String]) -> Result<CliCommand> {
         body_file: v.required("--body-file")?,
         expected_body_file: v.required("--expected-body-file")?,
     })
+}
+
+fn parse_wi_query(args: &[String]) -> Result<CliCommand> {
+    let mut v = common(
+        args,
+        &[
+            "--wiql",
+            "--wiql-file",
+            "--search",
+            "--top",
+            "--profile",
+            "--project",
+        ],
+    )?;
+    if v.positional.is_some() {
+        return Err(Error(
+            "wi query does not accept a positional argument.".into(),
+        ));
+    }
+    let sources = [
+        v.take("--wiql").map(WorkItemQuery::Wiql),
+        v.take("--wiql-file").map(WorkItemQuery::WiqlFile),
+        v.take("--search").map(WorkItemQuery::Search),
+    ];
+    let mut sources = sources.into_iter().flatten();
+    let query = sources.next().ok_or_else(|| {
+        Error("wi query requires exactly one of --wiql, --wiql-file, or --search.".into())
+    })?;
+    if sources.next().is_some() {
+        return Err(Error(
+            "wi query requires exactly one of --wiql, --wiql-file, or --search.".into(),
+        ));
+    }
+    let top = v.positive("--top")?.unwrap_or(100);
+    Ok(CliCommand::WiQuery {
+        query,
+        top,
+        profile: v.take("--profile"),
+        project: v.take("--project"),
+    })
+}
+
+fn parse_wi_id(args: &[String], command: &str) -> Result<CliCommand> {
+    let mut v = common(args, &["--profile", "--project"])?;
+    let id = work_item_id(&mut v, command)?;
+    let profile = v.take("--profile");
+    let project = v.take("--project");
+    Ok(match command {
+        "show" => CliCommand::WiShow {
+            id,
+            profile,
+            project,
+        },
+        "comments" => CliCommand::WiComments {
+            id,
+            profile,
+            project,
+        },
+        "open" => CliCommand::WiOpen {
+            id,
+            profile,
+            project,
+        },
+        _ => unreachable!(),
+    })
+}
+
+fn parse_wi_comment(args: &[String]) -> Result<CliCommand> {
+    let mut v = common(args, &["--body-file", "--profile", "--project"])?;
+    let id = work_item_id(&mut v, "comment")?;
+    Ok(CliCommand::WiComment {
+        id,
+        body_file: v.required("--body-file")?,
+        profile: v.take("--profile"),
+        project: v.take("--project"),
+    })
+}
+
+fn parse_wi_create(args: &[String]) -> Result<CliCommand> {
+    let mut v = common(
+        args,
+        &[
+            "--type",
+            "--title",
+            "--description-file",
+            "--assign-to",
+            "--tags",
+            "--profile",
+            "--project",
+        ],
+    )?;
+    if v.positional.is_some() {
+        return Err(Error(
+            "wi create does not accept a positional argument.".into(),
+        ));
+    }
+    Ok(CliCommand::WiCreate {
+        work_item_type: v.required("--type")?,
+        title: v.required("--title")?,
+        description_file: v.take("--description-file"),
+        assign_to: v.take("--assign-to"),
+        tags: v.take("--tags"),
+        profile: v.take("--profile"),
+        project: v.take("--project"),
+    })
+}
+
+fn parse_wi_update(args: &[String]) -> Result<CliCommand> {
+    let mut v = common(
+        args,
+        &[
+            "--state",
+            "--title",
+            "--assign-to",
+            "--tags",
+            "--description-file",
+            "--profile",
+            "--project",
+        ],
+    )?;
+    let id = work_item_id(&mut v, "update")?;
+    let state = v.take("--state");
+    let title = v.take("--title");
+    let assign_to = v.take("--assign-to");
+    let tags = v.take("--tags");
+    let description_file = v.take("--description-file");
+    if state.is_none()
+        && title.is_none()
+        && assign_to.is_none()
+        && tags.is_none()
+        && description_file.is_none()
+    {
+        return Err(Error(
+            "wi update requires at least one field option.".into(),
+        ));
+    }
+    Ok(CliCommand::WiUpdate {
+        id,
+        state,
+        title,
+        assign_to,
+        tags,
+        description_file,
+        profile: v.take("--profile"),
+        project: v.take("--project"),
+    })
+}
+
+fn work_item_id(v: &mut Values, command: &str) -> Result<i64> {
+    let raw = v
+        .positional
+        .take()
+        .ok_or_else(|| Error(format!("wi {command} requires a work item ID.")))?;
+    let id = raw
+        .parse::<i64>()
+        .map_err(|_| Error("Work item ID must be a positive integer.".into()))?;
+    if id <= 0 {
+        Err(Error("Work item ID must be a positive integer.".into()))
+    } else {
+        Ok(id)
+    }
 }

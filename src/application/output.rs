@@ -1,6 +1,6 @@
 use ado_core::{Error, Result};
 use serde_json::Value;
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, process::Command};
 
 pub(super) fn standardize_path(value: String) -> Result<PathBuf> {
     use std::path::Component;
@@ -52,4 +52,27 @@ pub(super) fn write_json(v: &Value) -> Result<()> {
 pub(super) fn write_value<T: serde::Serialize>(v: &T) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(v)?);
     Ok(())
+}
+
+pub(super) fn open_browser(url: &str) -> Result<()> {
+    let executable = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "linux") {
+        "xdg-open"
+    } else {
+        return Err(Error(
+            "Opening a browser is supported only on macOS and Linux.".into(),
+        ));
+    };
+    let status = Command::new(executable)
+        .arg(url)
+        .status()
+        .map_err(|error| Error(format!("Could not launch {executable}: {error}")))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(Error(format!(
+            "{executable} exited with status {status}; the URL was not opened."
+        )))
+    }
 }

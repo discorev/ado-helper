@@ -222,3 +222,19 @@ fn git_runner_drains_large_output_without_deadlock() {
         .unwrap();
     assert!(o.len() > 1_000_000)
 }
+
+#[test]
+fn remote_discovery_does_not_require_an_attached_branch() {
+    let values = HashMap::from([
+        ("rev-parse --abbrev-ref HEAD".into(), "HEAD".into()),
+        ("remote".into(), "origin".into()),
+        (
+            "remote get-url origin".into(),
+            "https://dev.azure.com/acme/My%20Project/_git/repo".into(),
+        ),
+    ]);
+    let remote = AzureGitRemote::discover(&Dictionary(values), None).unwrap();
+    assert_eq!(remote.organization, "acme");
+    assert_eq!(remote.project, "My Project");
+    assert_eq!(remote.repository, "repo");
+}

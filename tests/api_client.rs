@@ -387,3 +387,185 @@ fn comment_edit_patches_only_content_at_exact_comment() {
     );
     assert_eq!(c.transport.count(), 1);
 }
+
+#[test]
+fn wiql_batches_work_item_reads_and_preserves_query_order() {
+    let expected: Vec<i64> = (1..=201).rev().collect();
+    let expected_for_mock = expected.clone();
+    let m = Mock::new(move |r, index| match index {
+        0 => {
+            assert_eq!(r.method, "POST");
+            assert_eq!(r.url.path(), "/acme/My%20Project/_apis/wit/wiql");
+            let q = query(r);
+            assert_eq!(q["api-version"], "7.1");
+            assert_eq!(q["$top"], "250");
+            let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+            assert_eq!(body, json!({"query": "SELECT [System.Id] FROM WorkItems"}));
+            Ok(response(
+                r,
+                200,
+                &json!({"workItems": expected_for_mock.iter().map(|id| json!({"id": id})).collect::<Vec<_>>() }),
+                &[],
+            ))
+        }
+        1 | 2 => {
+            assert_eq!(r.method, "GET");
+            assert_eq!(r.url.path(), "/acme/My%20Project/_apis/wit/workitems");
+            let q = query(r);
+            let ids = q["ids"]
+                .split(',')
+                .map(|id| id.parse::<i64>().unwrap())
+                .collect::<Vec<_>>();
+            assert!(ids.len() <= 200);
+            assert_eq!(
+                q["fields"],
+                "System.Id,System.WorkItemType,System.Title,System.State,System.AssignedTo,System.AreaPath,System.IterationPath,System.Tags"
+            );
+            let mut response_items = ids
+                .iter()
+                .map(|id| json!({"id": id, "fields": {"System.Title": format!("Item {id}")}}))
+                .collect::<Vec<_>>();
+            response_items.reverse();
+            Ok(response(r, 200, &json!({"value": response_items}), &[]))
+        }
+        _ => panic!("unexpected request"),
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    let ids = c
+        .wiql("My Project", "SELECT [System.Id] FROM WorkItems", 250)
+        .unwrap();
+    let items = c.work_items("My Project", &ids).unwrap();
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item["id"].as_i64().unwrap())
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(c.transport.count(), 3);
+}
+
+#[test]
+fn work_item_comments_use_preview_version_and_follow_continuation() {
+    let m = Mock::new(|r, index| {
+        assert_eq!(
+            r.url.path(),
+            "/acme/Project/_apis/wit/workItems/42/comments"
+        );
+        assert_eq!(query(r)["api-version"], "7.1-preview.4");
+        if index == 0 {
+            assert!(!query(r).contains_key("continuationToken"));
+            Ok(response(
+                r,
+                200,
+                &json!({"comments": [{"id": 1}], "continuationToken": "next token&opaque=yes"}),
+                &[],
+            ))
+        } else {
+            assert_eq!(query(r)["continuationToken"], "next token&opaque=yes");
+            Ok(response(r, 200, &json!({"comments": [{"id": 2}]}), &[]))
+        }
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert_eq!(
+        c.work_item_comments("Project", 42)
+            .unwrap()
+            .iter()
+            .map(|comment| comment["id"].as_i64().unwrap())
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert_eq!(c.transport.count(), 2);
+}
+
+#[test]
+fn work_item_comment_create_and_update_send_expected_patch_content_types() {
+    let m = Mock::new(|r, index| match index {
+        0 => {
+            assert_eq!(r.method, "POST");
+            assert_eq!(
+                r.url.path(),
+                "/acme/Project/_apis/wit/workItems/42/comments"
+            );
+            assert_eq!(query(r)["api-version"], "7.1-preview.4");
+            assert_eq!(r.headers["Content-Type"], "application/json");
+            let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+            assert_eq!(body, json!({"text": "Looks good"}));
+            Ok(response(
+                r,
+                200,
+                &json!({"id": 7, "text": "Looks good"}),
+                &[],
+            ))
+        }
+        1 => {
+            assert_eq!(r.method, "POST");
+            assert_eq!(
+                r.url.path(),
+                "/acme/Project/_apis/wit/workitems/$User%20Story"
+            );
+            assert_eq!(r.headers["Content-Type"], "application/json-patch+json");
+            let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+            assert_eq!(
+                body,
+                json!([
+                    {"op": "add", "path": "/fields/System.Title", "value": "New story"},
+                    {"op": "add", "path": "/fields/System.Tags", "value": "api;urgent"}
+                ])
+            );
+            Ok(response(r, 200, &json!({"id": 8, "fields": {}}), &[]))
+        }
+        2 => {
+            assert_eq!(r.method, "PATCH");
+            assert_eq!(r.url.path(), "/acme/Project/_apis/wit/workitems/8");
+            assert_eq!(r.headers["Content-Type"], "application/json-patch+json");
+            let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+            assert_eq!(
+                body,
+                json!([{"op": "add", "path": "/fields/System.State", "value": "Active"}])
+            );
+            Ok(response(r, 200, &json!({"id": 8, "fields": {}}), &[]))
+        }
+        _ => panic!("unexpected request"),
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert_eq!(
+        c.add_work_item_comment("Project", 42, "Looks good")
+            .unwrap()["id"],
+        7
+    );
+    c.create_work_item(
+        "Project",
+        "User Story",
+        &json!([
+            {"op": "add", "path": "/fields/System.Title", "value": "New story"},
+            {"op": "add", "path": "/fields/System.Tags", "value": "api;urgent"}
+        ]),
+    )
+    .unwrap();
+    c.update_work_item(
+        "Project",
+        8,
+        &json!([{"op": "add", "path": "/fields/System.State", "value": "Active"}]),
+    )
+    .unwrap();
+    assert_eq!(c.transport.count(), 3);
+}
+
+#[test]
+fn work_item_search_escapes_single_quotes_in_wiql() {
+    let m = Mock::new(|r, _| {
+        let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            body["query"],
+            "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project AND ([System.Title] CONTAINS 'owner''s bug' OR [System.Description] CONTAINS 'owner''s bug') ORDER BY [System.ChangedDate] DESC"
+        );
+        Ok(response(r, 200, &json!({"workItems": []}), &[]))
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert!(
+        c.search_work_items("Project", "owner's bug", 100)
+            .unwrap()
+            .is_empty()
+    );
+}

@@ -253,3 +253,186 @@ fn parses_comment_edit_and_requires_expected_body() {
     zero[4] = "0".into();
     assert!(cli::parse(&zero).is_err());
 }
+
+#[test]
+fn parses_pr_open_with_required_target() {
+    assert_eq!(
+        cli::parse(&svec(&["pr", "open", "42", "--profile", "work"])).unwrap(),
+        CliCommand::PrOpen {
+            target: PullRequestTarget::Number(42),
+            profile: Some("work".into()),
+        }
+    );
+    assert!(cli::parse(&svec(&["pr", "open"])).is_err());
+}
+
+#[test]
+fn parses_work_item_queries_and_validates_source_and_top() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "wi",
+            "query",
+            "--search",
+            "broken build",
+            "--top",
+            "25",
+            "--profile",
+            "work",
+            "--project",
+            "Web App",
+        ]))
+        .unwrap(),
+        CliCommand::WiQuery {
+            query: WorkItemQuery::Search("broken build".into()),
+            top: 25,
+            profile: Some("work".into()),
+            project: Some("Web App".into()),
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&["wi", "query", "--wiql-file", "/tmp/query"])).unwrap(),
+        CliCommand::WiQuery {
+            query: WorkItemQuery::WiqlFile("/tmp/query".into()),
+            top: 100,
+            profile: None,
+            project: None,
+        }
+    );
+    assert!(cli::parse(&svec(&["wi", "query"])).is_err());
+    assert!(
+        cli::parse(&svec(&[
+            "wi",
+            "query",
+            "--wiql",
+            "SELECT [System.Id] FROM WorkItems",
+            "--search",
+            "bug"
+        ]))
+        .is_err()
+    );
+    for top in ["0", "-1", "not-a-number"] {
+        assert!(
+            cli::parse(&svec(&["wi", "query", "--search", "bug", "--top", top])).is_err(),
+            "accepted top {top}"
+        );
+    }
+}
+
+#[test]
+fn parses_work_item_read_comment_and_open_commands() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "wi",
+            "show",
+            "7",
+            "--project",
+            "Project",
+            "--profile",
+            "work"
+        ]))
+        .unwrap(),
+        CliCommand::WiShow {
+            id: 7,
+            profile: Some("work".into()),
+            project: Some("Project".into()),
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&["wi", "comments", "8"])).unwrap(),
+        CliCommand::WiComments {
+            id: 8,
+            profile: None,
+            project: None,
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&["wi", "comment", "9", "--body-file", "/tmp/body"])).unwrap(),
+        CliCommand::WiComment {
+            id: 9,
+            body_file: "/tmp/body".into(),
+            profile: None,
+            project: None,
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&["wi", "open", "10", "--project", "P"])).unwrap(),
+        CliCommand::WiOpen {
+            id: 10,
+            profile: None,
+            project: Some("P".into()),
+        }
+    );
+    for args in [
+        svec(&["wi", "show"]),
+        svec(&["wi", "comments", "0"]),
+        svec(&["wi", "comment", "1"]),
+        svec(&["wi", "open", "invalid"]),
+    ] {
+        assert!(cli::parse(&args).is_err());
+    }
+}
+
+#[test]
+fn parses_work_item_create_and_requires_type_and_title() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "wi",
+            "create",
+            "--type",
+            "User Story",
+            "--title",
+            "Add search",
+            "--description-file",
+            "/tmp/description",
+            "--assign-to",
+            "ada@example.test",
+            "--tags",
+            "api;urgent"
+        ]))
+        .unwrap(),
+        CliCommand::WiCreate {
+            work_item_type: "User Story".into(),
+            title: "Add search".into(),
+            description_file: Some("/tmp/description".into()),
+            assign_to: Some("ada@example.test".into()),
+            tags: Some("api;urgent".into()),
+            profile: None,
+            project: None,
+        }
+    );
+    assert!(cli::parse(&svec(&["wi", "create", "--title", "Title"])).is_err());
+    assert!(cli::parse(&svec(&["wi", "create", "--type", "Bug"])).is_err());
+}
+
+#[test]
+fn parses_work_item_update_and_requires_a_field() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "wi",
+            "update",
+            "12",
+            "--state",
+            "Active",
+            "--title",
+            "New title",
+            "--assign-to",
+            "ada@example.test",
+            "--tags",
+            "one;two",
+            "--description-file",
+            "/tmp/description"
+        ]))
+        .unwrap(),
+        CliCommand::WiUpdate {
+            id: 12,
+            state: Some("Active".into()),
+            title: Some("New title".into()),
+            assign_to: Some("ada@example.test".into()),
+            tags: Some("one;two".into()),
+            description_file: Some("/tmp/description".into()),
+            profile: None,
+            project: None,
+        }
+    );
+    assert!(cli::parse(&svec(&["wi", "update", "12"])).is_err());
+}

@@ -28,4 +28,33 @@ fn run() -> Result<()> {
     Application::new()?.run(command)
 }
 
-const HELP: &str = "Usage:\n  ado auth add NAME --org URL [--no-browser]\n  ado auth update NAME [--no-browser]\n  ado auth status [--check]\n  ado auth remove NAME\n  ado pr show [TARGET] [--profile NAME]\n  ado pr threads [TARGET] [--profile NAME]\n  ado pr changes [TARGET] [--profile NAME] [--iteration N]\n  ado pr clone [TARGET] [--profile NAME] [--directory PATH]\n  ado pr diff [TARGET] [--profile NAME] [--directory PATH]\n  ado pr edit-comment [TARGET] --thread-id N --comment-id N --body-file PATH\n      --expected-body-file PATH [--profile NAME]\n  ado pr comment [TARGET] --top-level --body-file PATH --commit SHA [--profile NAME]\n  ado pr comment [TARGET] --file PATH --line N [--end-line N] --side left|right\n      --body-file PATH --commit SHA --iteration N --change-id N [--profile NAME]\n\nTARGET is an Azure DevOps PR URL or positive PR number. Omit it to use the current branch.\nPull-request data is written as JSON; authentication and help are human-readable.";
+const HELP: &str = "Usage:
+  ado auth add NAME --org URL [--no-browser]
+  ado auth update NAME [--no-browser]
+  ado auth status [--check]
+  ado auth remove NAME
+  ado pr show [TARGET] [--profile NAME]
+  ado pr open TARGET [--profile NAME]
+  ado pr threads [TARGET] [--profile NAME]
+  ado pr changes [TARGET] [--profile NAME] [--iteration N]
+  ado pr clone [TARGET] [--profile NAME] [--directory PATH]
+  ado pr diff [TARGET] [--profile NAME] [--directory PATH]
+  ado pr edit-comment [TARGET] --thread-id N --comment-id N --body-file PATH
+      --expected-body-file PATH [--profile NAME]
+  ado pr comment [TARGET] --top-level --body-file PATH --commit SHA [--profile NAME]
+  ado pr comment [TARGET] --file PATH --line N [--end-line N] --side left|right
+      --body-file PATH --commit SHA --iteration N --change-id N [--profile NAME]
+  ado wi query (--wiql QUERY | --wiql-file PATH | --search TEXT) [--top N]
+      [--project NAME] [--profile NAME]
+  ado wi show ID [--project NAME] [--profile NAME]
+  ado wi comments ID [--project NAME] [--profile NAME]
+  ado wi comment ID --body-file PATH [--project NAME] [--profile NAME]
+  ado wi create --type TYPE --title TEXT [--description-file PATH] [--assign-to USER]
+      [--tags TAGS] [--project NAME] [--profile NAME]
+  ado wi update ID [--state STATE] [--title TEXT] [--assign-to USER] [--tags TAGS]
+      [--description-file PATH] [--project NAME] [--profile NAME]
+  ado wi open ID [--project NAME] [--profile NAME]
+
+TARGET is an Azure DevOps PR URL or positive PR number. Omit it where allowed to use the current branch.
+Work-item commands derive the project from the current Azure Git remote unless --project is supplied.
+Command data is written as JSON; open commands print the URL before launching it.";

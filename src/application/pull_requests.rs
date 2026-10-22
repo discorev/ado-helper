@@ -1,6 +1,6 @@
 use super::{
     Application,
-    output::{integer, read_body, standardize_path, write_json, write_value},
+    output::{integer, open_browser, read_body, standardize_path, write_json, write_value},
 };
 use ado_core::{
     Error, Result,
@@ -16,6 +16,7 @@ use ado_core::{
     profiles::Profile,
 };
 use serde_json::{Value, json};
+use url::Url;
 
 struct Resolved {
     locator: PrLocator,
@@ -39,6 +40,29 @@ impl Application {
         profile_name: Option<&str>,
     ) -> Result<()> {
         write_json(&self.resolve(target, profile_name)?.pull_request)
+    }
+
+    pub(super) fn pr_open(
+        &self,
+        target: PullRequestTarget,
+        profile_name: Option<&str>,
+    ) -> Result<()> {
+        let resolved = self.resolve(target, profile_name)?;
+        let repository = repository_identity(&resolved.pull_request)?;
+        let mut url = Url::parse(&resolved.locator.organization.url())
+            .map_err(|_| Error("Could not construct the pull request URL.".into()))?;
+        let id = resolved.locator.id.to_string();
+        url.path_segments_mut()
+            .map_err(|_| Error("Could not construct the pull request URL.".into()))?
+            .extend([
+                repository.project.as_str(),
+                "_git",
+                repository.repository.as_str(),
+                "pullrequest",
+                id.as_str(),
+            ]);
+        println!("{url}");
+        open_browser(url.as_str())
     }
 
     pub(super) fn pr_threads(

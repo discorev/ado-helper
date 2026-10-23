@@ -31,6 +31,36 @@ pub enum CliCommand {
     AuthRemove {
         name: String,
     },
+    PrQuery {
+        status: String,
+        creator: Option<String>,
+        reviewer: Option<String>,
+        source: Option<String>,
+        target: Option<String>,
+        top: i64,
+        profile: Option<String>,
+    },
+    PrCreate {
+        source: Option<String>,
+        target: Option<String>,
+        title: String,
+        description_file: Option<String>,
+        draft: bool,
+        reviewers: Vec<String>,
+        work_items: Vec<i64>,
+        tags: Option<String>,
+        profile: Option<String>,
+    },
+    PrUpdate {
+        target: PullRequestTarget,
+        title: Option<String>,
+        description_file: Option<String>,
+        status: Option<String>,
+        draft: Option<bool>,
+        add_reviewers: Vec<String>,
+        tags: Option<String>,
+        profile: Option<String>,
+    },
     PrShow {
         target: PullRequestTarget,
         profile: Option<String>,
@@ -148,6 +178,9 @@ pub fn parse(arguments: &[String]) -> Result<CliCommand> {
         ("auth", "update") => parse_auth_update(args),
         ("auth", "status") => parse_auth_status(args),
         ("auth", "remove") => parse_auth_remove(args),
+        ("pr", "query") => parse_pr_query(args),
+        ("pr", "create") => parse_pr_create(args),
+        ("pr", "update") => parse_pr_update(args),
         ("pr", "show") => parse_simple(args, true),
         ("pr", "open") => parse_pr_open(args),
         ("pr", "threads") => parse_simple(args, false),
@@ -329,6 +362,268 @@ impl Values {
             .ok_or_else(|| Error(format!("Option '{n}' is required.")))
     }
 }
+
+struct MultiValues {
+    positional: Option<String>,
+    options: BTreeMap<String, String>,
+    repeated: BTreeMap<String, Vec<String>>,
+    flags: BTreeSet<String>,
+}
+
+fn multi_values(
+    args: &[String],
+    options: &[&str],
+    repeated: &[&str],
+    flags: &[&str],
+) -> Result<MultiValues> {
+    let options: BTreeSet<&str> = options.iter().copied().collect();
+    let repeated: BTreeSet<&str> = repeated.iter().copied().collect();
+    let flags: BTreeSet<&str> = flags.iter().copied().collect();
+    let mut values = MultiValues {
+        positional: None,
+        options: BTreeMap::new(),
+        repeated: BTreeMap::new(),
+        flags: BTreeSet::new(),
+    };
+    let mut i = 0;
+    while i < args.len() {
+        let argument = &args[i];
+        if flags.contains(argument.as_str()) {
+            if !values.flags.insert(argument.clone()) {
+                return Err(Error(format!(
+                    "Option '{argument}' may only be specified once."
+                )));
+            }
+            i += 1;
+        } else if options.contains(argument.as_str()) || repeated.contains(argument.as_str()) {
+            let Some(value) = args.get(i + 1).filter(|value| !value.starts_with("--")) else {
+                return Err(Error(format!("Option '{argument}' requires a value.")));
+            };
+            if options.contains(argument.as_str()) {
+                if values
+                    .options
+                    .insert(argument.clone(), value.clone())
+                    .is_some()
+                {
+                    return Err(Error(format!(
+                        "Option '{argument}' may only be specified once."
+                    )));
+                }
+            } else {
+                values
+                    .repeated
+                    .entry(argument.clone())
+                    .or_default()
+                    .push(value.clone());
+            }
+            i += 2;
+        } else if argument.starts_with('-') {
+            return Err(Error(format!("Unexpected option '{argument}'.")));
+        } else {
+            if values.positional.replace(argument.clone()).is_some() {
+                return Err(Error(
+                    "Only one positional argument may be specified.".into(),
+                ));
+            }
+            i += 1;
+        }
+    }
+    Ok(values)
+}
+
+impl MultiValues {
+    fn take(&mut self, name: &str) -> Option<String> {
+        self.options.remove(name)
+    }
+
+    fn required(&mut self, name: &str) -> Result<String> {
+        self.take(name)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                Error(format!(
+                    "Option '{name}' is required and must have a value."
+                ))
+            })
+    }
+
+    fn repeated(&mut self, name: &str) -> Vec<String> {
+        self.repeated.remove(name).unwrap_or_default()
+    }
+
+    fn positive(&mut self, name: &str) -> Result<Option<i64>> {
+        let Some(value) = self.take(name) else {
+            return Ok(None);
+        };
+        let value = value
+            .parse::<i64>()
+            .map_err(|_| Error(format!("{name} must be a positive integer.")))?;
+        if value <= 0 {
+            Err(Error(format!("{name} must be a positive integer.")))
+        } else {
+            Ok(Some(value))
+        }
+    }
+
+    fn target(&mut self) -> Result<PullRequestTarget> {
+        let mut values = Values {
+            positional: self.positional.take(),
+            options: BTreeMap::new(),
+        };
+        values.target()
+    }
+}
+
+fn parse_pr_query(args: &[String]) -> Result<CliCommand> {
+    let mut values = multi_values(
+        args,
+        &[
+            "--status",
+            "--creator",
+            "--reviewer",
+            "--source",
+            "--target",
+            "--top",
+            "--profile",
+        ],
+        &[],
+        &[],
+    )?;
+    if values.positional.is_some() {
+        return Err(Error(
+            "pr query does not accept a positional argument.".into(),
+        ));
+    }
+    let status = values.take("--status").unwrap_or_else(|| "active".into());
+    if !["active", "completed", "abandoned", "all"].contains(&status.as_str()) {
+        return Err(Error(
+            "--status must be 'active', 'completed', 'abandoned', or 'all'.".into(),
+        ));
+    }
+    let top = values.positive("--top")?.unwrap_or(100);
+    Ok(CliCommand::PrQuery {
+        status,
+        creator: values.take("--creator"),
+        reviewer: values.take("--reviewer"),
+        source: values.take("--source"),
+        target: values.take("--target"),
+        top,
+        profile: values.take("--profile"),
+    })
+}
+
+fn parse_pr_create(args: &[String]) -> Result<CliCommand> {
+    let mut values = multi_values(
+        args,
+        &[
+            "--source",
+            "--target",
+            "--title",
+            "--description-file",
+            "--tags",
+            "--profile",
+        ],
+        &["--reviewer", "--work-item"],
+        &["--draft"],
+    )?;
+    if values.positional.is_some() {
+        return Err(Error(
+            "pr create does not accept a positional argument.".into(),
+        ));
+    }
+    let reviewers = values.repeated("--reviewer");
+    if reviewers.iter().any(|reviewer| reviewer.trim().is_empty()) {
+        return Err(Error("--reviewer must not be empty.".into()));
+    }
+    let work_items = values
+        .repeated("--work-item")
+        .into_iter()
+        .map(|value| {
+            value
+                .parse::<i64>()
+                .ok()
+                .filter(|id| *id > 0)
+                .ok_or_else(|| Error("--work-item must be a positive integer.".into()))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(CliCommand::PrCreate {
+        source: values.take("--source"),
+        target: values.take("--target"),
+        title: values.required("--title")?,
+        description_file: values.take("--description-file"),
+        draft: values.flags.contains("--draft"),
+        reviewers,
+        work_items,
+        tags: values.take("--tags"),
+        profile: values.take("--profile"),
+    })
+}
+
+fn parse_pr_update(args: &[String]) -> Result<CliCommand> {
+    let mut values = multi_values(
+        args,
+        &[
+            "--title",
+            "--description-file",
+            "--status",
+            "--tags",
+            "--profile",
+        ],
+        &["--add-reviewer"],
+        &["--draft", "--ready"],
+    )?;
+    if values.flags.contains("--draft") && values.flags.contains("--ready") {
+        return Err(Error(
+            "pr update accepts only one of --draft or --ready.".into(),
+        ));
+    }
+    let target = values.target()?;
+    let title = values.take("--title");
+    let description_file = values.take("--description-file");
+    let status = values.take("--status");
+    if status
+        .as_deref()
+        .is_some_and(|status| !["active", "abandoned"].contains(&status))
+    {
+        return Err(Error("--status must be 'active' or 'abandoned'.".into()));
+    }
+    let draft = if values.flags.contains("--draft") {
+        Some(true)
+    } else if values.flags.contains("--ready") {
+        Some(false)
+    } else {
+        None
+    };
+    let add_reviewers = values.repeated("--add-reviewer");
+    if add_reviewers
+        .iter()
+        .any(|reviewer| reviewer.trim().is_empty())
+    {
+        return Err(Error("--add-reviewer must not be empty.".into()));
+    }
+    let tags = values.take("--tags");
+    if title.is_none()
+        && description_file.is_none()
+        && status.is_none()
+        && draft.is_none()
+        && add_reviewers.is_empty()
+        && tags.is_none()
+    {
+        return Err(Error(
+            "pr update requires at least one field option.".into(),
+        ));
+    }
+    Ok(CliCommand::PrUpdate {
+        target,
+        title,
+        description_file,
+        status,
+        draft,
+        add_reviewers,
+        tags,
+        profile: values.take("--profile"),
+    })
+}
+
 fn parse_simple(args: &[String], show: bool) -> Result<CliCommand> {
     let mut v = common(args, &["--profile"])?;
     let target = v.target()?;

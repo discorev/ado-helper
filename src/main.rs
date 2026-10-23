@@ -33,7 +33,15 @@ const HELP: &str = "Usage:
   ado auth update NAME [--no-browser]
   ado auth status [--check]
   ado auth remove NAME
+  ado pr query [--status active|completed|abandoned|all] [--creator me|USER]
+      [--reviewer me|USER] [--source BRANCH] [--target BRANCH] [--top N] [--profile NAME]
   ado pr show [TARGET] [--profile NAME]
+  ado pr create [--source BRANCH] [--target BRANCH] --title TEXT
+      [--description-file PATH] [--draft] [--reviewer USER]... [--work-item ID]...
+      [--tags TAGS] [--profile NAME]
+  ado pr update [TARGET] [--title TEXT] [--description-file PATH]
+      [--status active|abandoned] [--draft | --ready] [--add-reviewer USER]...
+      [--tags TAGS] [--profile NAME]
   ado pr open TARGET [--profile NAME]
   ado pr threads [TARGET] [--profile NAME]
   ado pr changes [TARGET] [--profile NAME] [--iteration N]

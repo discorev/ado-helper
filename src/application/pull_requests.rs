@@ -8,15 +8,18 @@ use ado_core::{
     cli::PullRequestTarget,
     comment_anchor,
     git::{
-        AzureGitRemote, GitRunner, LocalGitContext, PullRequestGitInfo, ReviewCheckout,
-        is_commit_sha,
+        AzureGitRemote, GitRunner, GitRunning, LocalGitContext, PullRequestGitInfo, ReviewCheckout,
+        is_commit_sha, validate_ref,
     },
     keychain::CredentialStore,
     organization::{Organization, PrLocator},
     profiles::Profile,
 };
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
+use std::collections::{BTreeMap, BTreeSet};
 use url::Url;
+
+mod management;
 
 struct Resolved {
     locator: PrLocator,
@@ -49,20 +52,14 @@ impl Application {
     ) -> Result<()> {
         let resolved = self.resolve(target, profile_name)?;
         let repository = repository_identity(&resolved.pull_request)?;
-        let mut url = Url::parse(&resolved.locator.organization.url())
-            .map_err(|_| Error("Could not construct the pull request URL.".into()))?;
-        let id = resolved.locator.id.to_string();
-        url.path_segments_mut()
-            .map_err(|_| Error("Could not construct the pull request URL.".into()))?
-            .extend([
-                repository.project.as_str(),
-                "_git",
-                repository.repository.as_str(),
-                "pullrequest",
-                id.as_str(),
-            ]);
+        let url = management::pull_request_url(
+            &resolved.locator.organization,
+            &repository.project,
+            &repository.repository,
+            resolved.locator.id,
+        )?;
         println!("{url}");
-        open_browser(url.as_str())
+        open_browser(&url)
     }
 
     pub(super) fn pr_threads(
@@ -748,6 +745,7 @@ fn validate_thread(v: &Value, id: i64, path: &str, line: i64, end: i64, side: &s
 
 #[cfg(test)]
 mod tests {
+    use super::management::{parse_labels, pull_request_url, validate_source_tip};
     use super::*;
 
     #[test]
@@ -819,6 +817,73 @@ mod tests {
         assert_eq!(
             requested_iteration(None, &[]).unwrap_err().to_string(),
             "Azure DevOps pull request response is missing pull request iteration."
+        );
+    }
+
+    #[test]
+    fn create_requires_remote_source_and_current_head_match() {
+        let head = "a".repeat(40);
+        assert!(
+            validate_source_tip(
+                "topic",
+                "refs/heads/topic",
+                "refs/heads/topic",
+                Some(&head),
+                Some(&head),
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_source_tip(
+                "topic",
+                "refs/heads/topic",
+                "refs/heads/topic",
+                Some(&head),
+                Some(&"b".repeat(40)),
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("Push the current branch")
+        );
+        assert!(
+            validate_source_tip(
+                "other",
+                "refs/heads/other",
+                "refs/heads/topic",
+                None,
+                Some(&"b".repeat(40)),
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_source_tip(
+                "missing",
+                "refs/heads/missing",
+                "refs/heads/topic",
+                None,
+                None,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("does not exist")
+        );
+    }
+
+    #[test]
+    fn pull_request_output_builds_encoded_web_url_and_comma_labels() {
+        assert_eq!(
+            pull_request_url(
+                &Organization::parse("acme").unwrap(),
+                "My Project",
+                "Repo Name",
+                42,
+            )
+            .unwrap(),
+            "https://dev.azure.com/acme/My%20Project/_git/Repo%20Name/pullrequest/42"
+        );
+        assert_eq!(
+            parse_labels(" urgent,API, api, ,needs review "),
+            vec!["API", "needs review", "urgent"]
         );
     }
 }

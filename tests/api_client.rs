@@ -569,3 +569,161 @@ fn work_item_search_escapes_single_quotes_in_wiql() {
             .is_empty()
     );
 }
+
+#[test]
+fn pull_request_query_builds_repository_filters_and_top() {
+    let m = Mock::new(|r, _| {
+        assert_eq!(r.method, "GET");
+        assert_eq!(
+            r.url.path(),
+            "/acme/My%20Project/_apis/git/repositories/Repo%20Name/pullrequests"
+        );
+        let q = query(r);
+        assert_eq!(q["$top"], "25");
+        assert_eq!(q["$skip"], "0");
+        assert_eq!(q["searchCriteria.status"], "completed");
+        assert!(!q.contains_key("searchCriteria.creatorId"));
+        assert!(!q.contains_key("searchCriteria.reviewerId"));
+        assert_eq!(q["searchCriteria.sourceRefName"], "refs/heads/topic");
+        assert_eq!(q["searchCriteria.targetRefName"], "refs/heads/main");
+        assert_eq!(q["api-version"], "7.1");
+        Ok(response(
+            r,
+            200,
+            &json!({"value": [{
+                "pullRequestId": 42,
+                "createdBy": {"id": "creator-id"},
+                "reviewers": [{"id": "reviewer-id"}]
+            }]}),
+            &[],
+        ))
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert_eq!(
+        c.query_pull_requests(
+            "My Project",
+            "Repo Name",
+            "completed",
+            Some("creator-id"),
+            Some("reviewer-id"),
+            Some("refs/heads/topic"),
+            Some("refs/heads/main"),
+            25,
+        )
+        .unwrap()[0]["pullRequestId"],
+        42
+    );
+}
+
+#[test]
+fn pull_request_create_update_and_related_mutations_build_expected_requests() {
+    let m = Mock::new(|r, index| match index {
+        0 => {
+            assert_eq!(r.method, "POST");
+            assert_eq!(
+                r.url.path(),
+                "/acme/Project/_apis/git/repositories/Repo/pullrequests"
+            );
+            assert_eq!(r.headers["Content-Type"], "application/json");
+            let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+            assert_eq!(body["sourceRefName"], "refs/heads/topic");
+            assert!(body.get("reviewers").is_none());
+            assert_eq!(body["workItemRefs"][0]["id"], "99");
+            Ok(response(r, 200, &json!({"pullRequestId": 42}), &[]))
+        }
+        1 => {
+            assert_eq!(r.method, "PATCH");
+            assert_eq!(
+                r.url.path(),
+                "/acme/Project/_apis/git/repositories/Repo/pullrequests/42"
+            );
+            let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+            assert_eq!(body, json!({"isDraft": false, "status": "active"}));
+            Ok(response(r, 200, &json!({"pullRequestId": 42}), &[]))
+        }
+        2 => {
+            assert_eq!(r.method, "PUT");
+            assert!(r.url.path().ends_with("/pullrequests/42/reviewers"));
+            let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+            assert_eq!(body, json!({"uniqueName": "ada@example.test", "vote": 0}));
+            Ok(response(r, 200, &json!({"id": "reviewer-id"}), &[]))
+        }
+        3 => {
+            assert_eq!(r.method, "POST");
+            assert!(r.url.path().ends_with("/pullrequests/42/labels"));
+            let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+            assert_eq!(body, json!({"name": "urgent"}));
+            Ok(response(r, 200, &json!({"id": "label-id"}), &[]))
+        }
+        4 => {
+            assert_eq!(r.method, "DELETE");
+            assert!(r.url.path().ends_with("/pullrequests/42/labels/label-id"));
+            assert!(r.body.is_none());
+            Ok(response(r, 204, &json!({}), &[]))
+        }
+        _ => panic!("unexpected request"),
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    c.create_pull_request(
+        "Project",
+        "Repo",
+        &json!({
+            "sourceRefName": "refs/heads/topic",
+            "targetRefName": "refs/heads/main",
+            "title": "Title",
+            "workItemRefs": [{"id": "99"}],
+        }),
+    )
+    .unwrap();
+    c.update_pull_request(
+        "Project",
+        "Repo",
+        42,
+        &json!({"isDraft": false, "status": "active"}),
+    )
+    .unwrap();
+    c.add_pull_request_reviewer("Project", "Repo", 42, "ada@example.test")
+        .unwrap();
+    c.add_pull_request_label("Project", "Repo", 42, "urgent")
+        .unwrap();
+    c.delete_pull_request_label("Project", "Repo", 42, "label-id")
+        .unwrap();
+    assert_eq!(c.transport.count(), 5);
+}
+
+#[test]
+fn repository_and_branch_requests_parse_expected_values() {
+    let m = Mock::new(|r, index| match index {
+        0 => {
+            assert_eq!(r.url.path(), "/acme/Project/_apis/git/repositories/Repo");
+            Ok(response(
+                r,
+                200,
+                &json!({"defaultBranch": "refs/heads/main"}),
+                &[],
+            ))
+        }
+        1 => {
+            assert!(r.url.path().ends_with("/repositories/Repo/refs"));
+            assert_eq!(query(r)["filter"], "heads/topic");
+            Ok(response(
+                r,
+                200,
+                &json!({"value": [{"name": "refs/heads/topic", "objectId": "a".repeat(40)}]}),
+                &[],
+            ))
+        }
+        _ => panic!("unexpected request"),
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert_eq!(
+        c.repository("Project", "Repo").unwrap()["defaultBranch"],
+        "refs/heads/main"
+    );
+    assert_eq!(
+        c.branch_tip("Project", "Repo", "refs/heads/topic")
+            .unwrap()
+            .unwrap(),
+        "a".repeat(40)
+    );
+}

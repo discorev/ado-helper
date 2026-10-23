@@ -11,6 +11,7 @@ use std::{
 };
 use url::Url;
 
+mod pull_requests;
 mod work_items;
 
 #[derive(Debug, Clone)]
@@ -509,6 +510,17 @@ impl<T: HttpTransport> AdoClient<T> {
     }
     fn send_object(&self, method: &str, path: &[&str], body: &Value) -> Result<Value> {
         self.send_object_options(method, path, &[], body, Some("7.1"), "application/json")
+    }
+    fn send_empty(
+        &self,
+        method: &str,
+        path: &[&str],
+        query: &[(&str, &str)],
+        api_version: Option<&str>,
+    ) -> Result<()> {
+        let request = self.make_request_version(method, path, query, api_version)?;
+        self.perform(&request)?;
+        Ok(())
     }
     fn send_object_options(
         &self,

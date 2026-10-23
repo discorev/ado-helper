@@ -267,6 +267,171 @@ fn parses_pr_open_with_required_target() {
 }
 
 #[test]
+fn parses_pr_query_with_defaults_and_filters() {
+    assert_eq!(
+        cli::parse(&svec(&["pr", "query"])).unwrap(),
+        CliCommand::PrQuery {
+            status: "active".into(),
+            creator: None,
+            reviewer: None,
+            source: None,
+            target: None,
+            top: 100,
+            profile: None,
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "query",
+            "--status",
+            "completed",
+            "--creator",
+            "me",
+            "--reviewer",
+            "ada@example.test",
+            "--source",
+            "topic",
+            "--target",
+            "main",
+            "--top",
+            "25",
+            "--profile",
+            "work",
+        ]))
+        .unwrap(),
+        CliCommand::PrQuery {
+            status: "completed".into(),
+            creator: Some("me".into()),
+            reviewer: Some("ada@example.test".into()),
+            source: Some("topic".into()),
+            target: Some("main".into()),
+            top: 25,
+            profile: Some("work".into()),
+        }
+    );
+    for args in [
+        svec(&["pr", "query", "42"]),
+        svec(&["pr", "query", "--status", "invalid"]),
+        svec(&["pr", "query", "--top", "0"]),
+    ] {
+        assert!(cli::parse(&args).is_err());
+    }
+}
+
+#[test]
+fn parses_pr_create_with_repeatable_reviewers_and_work_items() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "create",
+            "--source",
+            "topic",
+            "--target",
+            "main",
+            "--title",
+            "Add search",
+            "--description-file",
+            "/tmp/description",
+            "--draft",
+            "--reviewer",
+            "ada@example.test",
+            "--reviewer",
+            "grace@example.test",
+            "--work-item",
+            "12",
+            "--work-item",
+            "13",
+            "--tags",
+            "api,urgent",
+            "--profile",
+            "work",
+        ]))
+        .unwrap(),
+        CliCommand::PrCreate {
+            source: Some("topic".into()),
+            target: Some("main".into()),
+            title: "Add search".into(),
+            description_file: Some("/tmp/description".into()),
+            draft: true,
+            reviewers: vec!["ada@example.test".into(), "grace@example.test".into()],
+            work_items: vec![12, 13],
+            tags: Some("api,urgent".into()),
+            profile: Some("work".into()),
+        }
+    );
+    assert!(cli::parse(&svec(&["pr", "create"])).is_err());
+    assert!(
+        cli::parse(&svec(&[
+            "pr",
+            "create",
+            "--title",
+            "Title",
+            "--work-item",
+            "0"
+        ]))
+        .is_err()
+    );
+}
+
+#[test]
+fn parses_pr_update_and_requires_a_field() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "update",
+            "42",
+            "--title",
+            "New title",
+            "--description-file",
+            "/tmp/description",
+            "--status",
+            "active",
+            "--ready",
+            "--add-reviewer",
+            "ada@example.test",
+            "--add-reviewer",
+            "grace@example.test",
+            "--tags",
+            "api,ready",
+            "--profile",
+            "work",
+        ]))
+        .unwrap(),
+        CliCommand::PrUpdate {
+            target: PullRequestTarget::Number(42),
+            title: Some("New title".into()),
+            description_file: Some("/tmp/description".into()),
+            status: Some("active".into()),
+            draft: Some(false),
+            add_reviewers: vec!["ada@example.test".into(), "grace@example.test".into()],
+            tags: Some("api,ready".into()),
+            profile: Some("work".into()),
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&["pr", "update", "--draft"])).unwrap(),
+        CliCommand::PrUpdate {
+            target: PullRequestTarget::CurrentBranch,
+            title: None,
+            description_file: None,
+            status: None,
+            draft: Some(true),
+            add_reviewers: vec![],
+            tags: None,
+            profile: None,
+        }
+    );
+    for args in [
+        svec(&["pr", "update"]),
+        svec(&["pr", "update", "42", "--status", "completed"]),
+        svec(&["pr", "update", "42", "--draft", "--ready"]),
+    ] {
+        assert!(cli::parse(&args).is_err());
+    }
+}
+
+#[test]
 fn parses_work_item_queries_and_validates_source_and_top() {
     assert_eq!(
         cli::parse(&svec(&[

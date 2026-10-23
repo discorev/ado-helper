@@ -289,12 +289,11 @@ fn remove_profile_failure_reports_token_gone() {
 fn scope_guidance_uses_least_privilege() {
     let o = Organization::parse("example").unwrap();
     let g = auth::scope_instructions(&o);
-    assert!(g.contains("vso.code"));
+    assert!(g.contains("vso.code_write"));
     assert!(g.contains("vso.threads_full"));
     assert!(g.contains("vso.work_write"));
     assert!(g.contains("vso.build"));
     assert!(g.contains("Do not choose Full access"));
-    assert!(!g.contains("vso.code_write"));
     assert!(g.contains("organization policy"));
     assert_eq!(
         auth::pat_settings_url(&o),

@@ -194,6 +194,7 @@ impl<T: HttpTransport> AdoClient<T> {
         if reviewer.trim().is_empty() {
             return Err(Error("Reviewer identity must not be empty.".into()));
         }
+        let reviewer_id = self.identity_id(reviewer)?;
         self.send_object(
             "PUT",
             &[
@@ -205,8 +206,9 @@ impl<T: HttpTransport> AdoClient<T> {
                 "pullrequests",
                 &id.to_string(),
                 "reviewers",
+                &reviewer_id,
             ],
-            &json!({"uniqueName": reviewer, "vote": 0}),
+            &json!({"vote": 0}),
         )
     }
 

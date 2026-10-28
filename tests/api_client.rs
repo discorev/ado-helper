@@ -642,20 +642,46 @@ fn pull_request_create_update_and_related_mutations_build_expected_requests() {
             Ok(response(r, 200, &json!({"pullRequestId": 42}), &[]))
         }
         2 => {
-            assert_eq!(r.method, "PUT");
-            assert!(r.url.path().ends_with("/pullrequests/42/reviewers"));
-            let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
-            assert_eq!(body, json!({"uniqueName": "ada@example.test", "vote": 0}));
-            Ok(response(r, 200, &json!({"id": "reviewer-id"}), &[]))
+            assert_eq!(r.method, "GET");
+            assert_eq!(r.url.host_str(), Some("vssps.dev.azure.com"));
+            assert_eq!(r.url.path(), "/acme/_apis/identities");
+            let q = query(r);
+            assert_eq!(q["searchFilter"], "General");
+            assert_eq!(q["filterValue"], "ada@example.test");
+            assert_eq!(q["api-version"], "7.1");
+            Ok(response(
+                r,
+                200,
+                &json!({"count": 1, "value": [{"id": REVIEWER_ID}]}),
+                &[],
+            ))
         }
         3 => {
+            assert_eq!(r.method, "PUT");
+            assert_eq!(r.url.host_str(), Some("dev.azure.com"));
+            assert_eq!(
+                r.url.path(),
+                format!(
+                    "/acme/Project/_apis/git/repositories/Repo/pullrequests/42/reviewers/{REVIEWER_ID}"
+                )
+            );
+            let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+            assert_eq!(body, json!({"vote": 0}));
+            Ok(response(
+                r,
+                200,
+                &json!({"id": REVIEWER_ID, "vote": 0}),
+                &[],
+            ))
+        }
+        4 => {
             assert_eq!(r.method, "POST");
             assert!(r.url.path().ends_with("/pullrequests/42/labels"));
             let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
             assert_eq!(body, json!({"name": "urgent"}));
             Ok(response(r, 200, &json!({"id": "label-id"}), &[]))
         }
-        4 => {
+        5 => {
             assert_eq!(r.method, "DELETE");
             assert!(r.url.path().ends_with("/pullrequests/42/labels/label-id"));
             assert!(r.body.is_none());
@@ -688,7 +714,56 @@ fn pull_request_create_update_and_related_mutations_build_expected_requests() {
         .unwrap();
     c.delete_pull_request_label("Project", "Repo", 42, "label-id")
         .unwrap();
-    assert_eq!(c.transport.count(), 5);
+    assert_eq!(c.transport.count(), 6);
+}
+
+const REVIEWER_ID: &str = "c272bad6-876b-6b0b-9869-2b60aa5a36f9";
+
+#[test]
+fn reviewer_guid_skips_identity_lookup() {
+    let m = Mock::new(|r, _| {
+        assert_eq!(r.method, "PUT");
+        assert!(
+            r.url
+                .path()
+                .ends_with(&format!("/pullrequests/42/reviewers/{REVIEWER_ID}"))
+        );
+        Ok(response(r, 200, &json!({"id": REVIEWER_ID}), &[]))
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    c.add_pull_request_reviewer("Project", "Repo", 42, &REVIEWER_ID.to_ascii_uppercase())
+        .unwrap();
+    assert_eq!(c.transport.count(), 1);
+}
+
+#[test]
+fn reviewer_lookup_rejects_missing_or_ambiguous_identities() {
+    for (status, matches, expected) in [
+        (200, json!([]), "No Azure DevOps identity matches 'ada'."),
+        (
+            200,
+            json!([{"id": "a"}, {"id": "b"}]),
+            "'ada' matches 2 Azure DevOps identities; pass the identity ID instead.",
+        ),
+        (
+            401,
+            json!([]),
+            "Could not look up the Azure DevOps identity 'ada': Azure DevOps rejected authentication (HTTP 401). Renew the affected profile with 'ado auth update NAME'. Resolving emails and names needs the PAT's Identity (Read) scope; an identity GUID skips the lookup.",
+        ),
+    ] {
+        let m = Mock::new(move |r, _| {
+            assert_eq!(r.url.path(), "/acme/_apis/identities");
+            Ok(response(r, status, &json!({"value": matches}), &[]))
+        });
+        let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+        assert_eq!(
+            c.add_pull_request_reviewer("Project", "Repo", 42, "ada")
+                .unwrap_err()
+                .0,
+            expected
+        );
+        assert_eq!(c.transport.count(), 1);
+    }
 }
 
 #[test]

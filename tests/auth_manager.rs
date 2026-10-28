@@ -292,6 +292,7 @@ fn scope_guidance_uses_least_privilege() {
     assert!(g.contains("vso.code_write"));
     assert!(g.contains("vso.threads_full"));
     assert!(g.contains("vso.work_write"));
+    assert!(g.contains("vso.identity"));
     assert!(g.contains("vso.build"));
     assert!(g.contains("Do not choose Full access"));
     assert!(g.contains("organization policy"));

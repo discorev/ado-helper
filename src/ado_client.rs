@@ -134,6 +134,47 @@ impl<T: HttpTransport> AdoClient<T> {
             unique_name,
         })
     }
+    /// Resolves an email, uniqueName or display name to an identity GUID. GUIDs pass through.
+    pub fn identity_id(&self, value: &str) -> Result<String> {
+        if is_guid(value) {
+            return Ok(value.to_ascii_lowercase());
+        }
+        let request = self.make_request_on(
+            "vssps.dev.azure.com",
+            "GET",
+            &["_apis", "identities"],
+            &[
+                ("searchFilter", "General"),
+                ("filterValue", value),
+                ("queryMembership", "None"),
+            ],
+            Some("7.1"),
+        )?;
+        let response = self.perform(&request).map_err(|Error(error)| {
+            Error(format!(
+                "Could not look up the Azure DevOps identity '{value}': {error} Resolving emails and names needs the PAT's Identity (Read) scope; an identity GUID skips the lookup."
+            ))
+        })?;
+        let object =
+            serde_json::from_slice::<Value>(&response.body).map_err(|_| invalid_response())?;
+        let ids = object
+            .get("value")
+            .and_then(Value::as_array)
+            .ok_or_else(invalid_response)?
+            .iter()
+            .map(|identity| nonempty(identity.get("id")).ok_or_else(invalid_response))
+            .collect::<Result<Vec<_>>>()?;
+        match ids.as_slice() {
+            [id] => Ok(id.clone()),
+            [] => Err(Error(format!(
+                "No Azure DevOps identity matches '{value}'."
+            ))),
+            _ => Err(Error(format!(
+                "'{value}' matches {} Azure DevOps identities; pass the identity ID instead.",
+                ids.len()
+            ))),
+        }
+    }
     pub fn pull_request(&self, id: i64) -> Result<Value> {
         if id <= 0 {
             return Err(Error("Pull request ID must be greater than zero.".into()));
@@ -559,7 +600,17 @@ impl<T: HttpTransport> AdoClient<T> {
         query: &[(&str, &str)],
         api_version: Option<&str>,
     ) -> Result<HttpRequest> {
-        let mut url = Url::parse("https://dev.azure.com").map_err(|_| invalid_request())?;
+        self.make_request_on("dev.azure.com", method, path, query, api_version)
+    }
+    fn make_request_on(
+        &self,
+        host: &str,
+        method: &str,
+        path: &[&str],
+        query: &[(&str, &str)],
+        api_version: Option<&str>,
+    ) -> Result<HttpRequest> {
+        let mut url = Url::parse(&format!("https://{host}")).map_err(|_| invalid_request())?;
         {
             let mut ps = url.path_segments_mut().map_err(|_| invalid_request())?;
             ps.push(&self.organization.name);
@@ -597,6 +648,13 @@ impl<T: HttpTransport> AdoClient<T> {
         }
         Ok(res)
     }
+}
+fn is_guid(value: &str) -> bool {
+    let groups: Vec<&str> = value.split('-').collect();
+    groups.iter().map(|g| g.len()).eq([8, 4, 4, 4, 12])
+        && groups
+            .iter()
+            .all(|g| g.chars().all(|c| c.is_ascii_hexdigit()))
 }
 fn nonempty(v: Option<&Value>) -> Option<String> {
     v.and_then(Value::as_str)

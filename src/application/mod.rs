@@ -94,6 +94,17 @@ impl Application {
             CliCommand::PrThreads { target, profile } => {
                 self.pr_threads(target, profile.as_deref())?
             }
+            CliCommand::PrVote {
+                target,
+                vote,
+                profile,
+            } => self.pr_vote(target, &vote, profile.as_deref())?,
+            CliCommand::PrThreadStatus {
+                target,
+                thread_id,
+                status,
+                profile,
+            } => self.pr_thread_status(target, thread_id, &status, profile.as_deref())?,
             CliCommand::PrChanges {
                 target,
                 profile,

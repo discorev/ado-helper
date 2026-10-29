@@ -212,6 +212,40 @@ impl<T: HttpTransport> AdoClient<T> {
         )
     }
 
+    pub fn set_pull_request_vote(
+        &self,
+        project: &str,
+        repository: &str,
+        id: i64,
+        reviewer_id: &str,
+        vote: i32,
+        is_required: Option<bool>,
+    ) -> Result<Value> {
+        self.validate_resource(project, repository, id)?;
+        if reviewer_id.trim().is_empty() {
+            return Err(Error("Reviewer identity must not be empty.".into()));
+        }
+        let mut body = json!({"vote": vote});
+        if let Some(required) = is_required {
+            body["isRequired"] = json!(required);
+        }
+        self.send_object(
+            "PUT",
+            &[
+                project,
+                "_apis",
+                "git",
+                "repositories",
+                repository,
+                "pullrequests",
+                &id.to_string(),
+                "reviewers",
+                reviewer_id,
+            ],
+            &body,
+        )
+    }
+
     pub fn pull_request_labels(
         &self,
         project: &str,

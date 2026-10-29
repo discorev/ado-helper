@@ -267,6 +267,88 @@ fn parses_pr_open_with_required_target() {
 }
 
 #[test]
+fn parses_pr_vote_and_validates_choice() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "vote",
+            "42",
+            "--vote",
+            "approve-with-suggestions",
+            "--profile",
+            "work",
+        ]))
+        .unwrap(),
+        CliCommand::PrVote {
+            target: PullRequestTarget::Number(42),
+            vote: "approve-with-suggestions".into(),
+            profile: Some("work".into()),
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&["pr", "vote", "--vote", "reset"])).unwrap(),
+        CliCommand::PrVote {
+            target: PullRequestTarget::CurrentBranch,
+            vote: "reset".into(),
+            profile: None,
+        }
+    );
+    for args in [
+        svec(&["pr", "vote"]),
+        svec(&["pr", "vote", "--vote", "strongly-approve"]),
+        svec(&["pr", "vote", "--vote", "approve", "--vote", "reject"]),
+    ] {
+        assert!(cli::parse(&args).is_err());
+    }
+}
+
+#[test]
+fn parses_pr_thread_status_and_validates_choice() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "thread-status",
+            "42",
+            "--thread-id",
+            "7",
+            "--status",
+            "wontfix",
+            "--profile",
+            "work",
+        ]))
+        .unwrap(),
+        CliCommand::PrThreadStatus {
+            target: PullRequestTarget::Number(42),
+            thread_id: 7,
+            status: "wontfix".into(),
+            profile: Some("work".into()),
+        }
+    );
+    for args in [
+        svec(&["pr", "thread-status", "--status", "active"]),
+        svec(&["pr", "thread-status", "--thread-id", "7"]),
+        svec(&[
+            "pr",
+            "thread-status",
+            "--thread-id",
+            "0",
+            "--status",
+            "active",
+        ]),
+        svec(&[
+            "pr",
+            "thread-status",
+            "--thread-id",
+            "7",
+            "--status",
+            "invalid",
+        ]),
+    ] {
+        assert!(cli::parse(&args).is_err());
+    }
+}
+
+#[test]
 fn parses_pr_query_with_defaults_and_filters() {
     assert_eq!(
         cli::parse(&svec(&["pr", "query"])).unwrap(),

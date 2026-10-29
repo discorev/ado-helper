@@ -767,6 +767,83 @@ fn reviewer_lookup_rejects_missing_or_ambiguous_identities() {
 }
 
 #[test]
+fn set_pull_request_vote_sends_vote_and_optional_is_required() {
+    let m = Mock::new(|r, index| {
+        assert_eq!(r.method, "PUT");
+        assert_eq!(
+            r.url.path(),
+            "/acme/Project/_apis/git/repositories/Repo/pullrequests/42/reviewers/ollie"
+        );
+        let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+        match index {
+            0 => assert_eq!(body, json!({"vote": 10, "isRequired": true})),
+            1 => assert_eq!(body, json!({"vote": -10})),
+            _ => panic!("unexpected request"),
+        }
+        Ok(response(
+            r,
+            200,
+            &json!({"id": "ollie", "vote": body["vote"]}),
+            &[],
+        ))
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert_eq!(
+        c.set_pull_request_vote("Project", "Repo", 42, "ollie", 10, Some(true))
+            .unwrap()["vote"],
+        10
+    );
+    assert_eq!(
+        c.set_pull_request_vote("Project", "Repo", 42, "ollie", -10, None)
+            .unwrap()["vote"],
+        -10
+    );
+    assert_eq!(c.transport.count(), 2);
+}
+
+#[test]
+fn set_pull_request_vote_rejects_empty_reviewer_without_sending() {
+    let m = Mock::new(|r, _| panic!("unexpected request to {}", r.url));
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert!(
+        c.set_pull_request_vote("Project", "Repo", 42, "  ", 10, None)
+            .is_err()
+    );
+    assert_eq!(c.transport.count(), 0);
+}
+
+#[test]
+fn update_thread_status_patches_only_status() {
+    let m = Mock::new(|r, _| {
+        assert_eq!(r.method, "PATCH");
+        assert_eq!(
+            r.url.path(),
+            "/acme/Project/_apis/git/repositories/Repo/pullRequests/4/threads/7"
+        );
+        let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+        assert_eq!(body, json!({"status": "wontFix"}));
+        Ok(response(
+            r,
+            200,
+            &json!({"id": 7, "status": "wontFix"}),
+            &[],
+        ))
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert!(
+        c.update_thread_status("Project", "Repo", 4, 0, "wontFix")
+            .is_err()
+    );
+    assert_eq!(c.transport.count(), 0);
+    assert_eq!(
+        c.update_thread_status("Project", "Repo", 4, 7, "wontFix")
+            .unwrap()["status"],
+        "wontFix"
+    );
+    assert_eq!(c.transport.count(), 1);
+}
+
+#[test]
 fn repository_and_branch_requests_parse_expected_values() {
     let m = Mock::new(|r, index| match index {
         0 => {

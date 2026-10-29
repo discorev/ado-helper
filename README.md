@@ -56,6 +56,8 @@ ado pr create --title "Add search" --reviewer ada@example.com --work-item 456 \
 ado pr update 123 --ready --add-reviewer grace@example.com --tags "api,approved"
 ado pr open 123
 ado pr threads https://dev.azure.com/ORG/PROJECT/_git/REPO/pullrequest/123
+ado pr vote 123 --vote approve
+ado pr thread-status 123 --thread-id 456 --status fixed
 ado pr changes 123 --iteration 4
 ado pr clone 123
 ado pr diff 123 --directory ~/Developer/ado-reviews/custom
@@ -66,6 +68,8 @@ ado pr diff 123 --directory ~/Developer/ado-reviews/custom
 `pr create` derives the organisation, project and repository from the current Azure Git remote. The source defaults to the current branch and the target defaults to the repository's default branch. The source must already exist on the remote, and when it is the current branch its remote tip must equal local `HEAD`; `ado` never pushes. Repeat `--reviewer` and `--work-item` to add more than one. `--tags` is a comma-separated PR-label list.
 
 `pr update` accepts the same URL, number or current-branch target resolution as other PR commands and requires at least one field option. Use `--draft` or `--ready` to change draft state, `--status active|abandoned` to change status, and repeat `--add-reviewer` as needed. Reviewers accept an email, unique name or identity GUID; anything other than a GUID is resolved through the organisation's identity service and must match exactly one identity. Supplying `--tags` replaces the complete PR-label set; use an empty value to clear it.
+
+`pr vote` sets the authenticated user's vote: `--vote approve` (10), `approve-with-suggestions` (5), `reset` (0), `wait` (-5), or `reject` (-10). It reads the current reviewer entry, if any, and sends `isRequired` back unchanged so voting never drops a required-reviewer flag. `pr thread-status` sets a thread's resolution with `--thread-id N --status active|fixed|wontfix|closed|bydesign|pending`; get thread IDs from `ado pr threads`.
 
 Clone and diff use only validated Azure SSH URLs, fetch the exact source and target refs, and verify their reviewed commit IDs. By default review checkouts live under `~/Developer/ado-reviews/ORG/REPO-pr-ID`. `ado` records their identity in `.git/ado-review.json`, refuses unmarked or dirty directories, disables hooks while refreshing, and disables external diff and text-conversion drivers. Cross-organization forks are rejected; same-organization forks use their separately validated source SSH URL.
 
@@ -88,7 +92,7 @@ ado pr comment 123 --top-level --body-file /tmp/comment.txt \
   --commit 0123456789abcdef0123456789abcdef01234567
 ```
 
-Top-level comments require the current source commit but no file or iteration context. Mixing `--top-level` with inline anchor options is rejected. Both modes verify the posting identity and read back the new thread; top-level verification checks the exact body, author and absence of a file anchor. If submission or verification is uncertain, inspect `ado pr threads` before retrying to avoid duplicates. Authentication stays inside `ado` using its native credential store; no external token extraction is needed. There are no commands for votes, merges, or resolving threads.
+Top-level comments require the current source commit but no file or iteration context. Mixing `--top-level` with inline anchor options is rejected. Both modes verify the posting identity and read back the new thread; top-level verification checks the exact body, author and absence of a file anchor. If submission or verification is uncertain, inspect `ado pr threads` before retrying to avoid duplicates. Authentication stays inside `ado` using its native credential store; no external token extraction is needed. There is no command for merges.
 
 Edit an existing comment authored by the authenticated account using its thread and comment IDs from `ado pr threads`:
 
@@ -119,6 +123,8 @@ The JSON output contracts for pull-request mutations and queries are:
 
 - `pr query`: an array of `{id, title, status, isDraft, creator, source, target, reviewers, url}`. `creator` and each reviewer's `identity` use the unique name, falling back to display name or `null`; reviewer entries also include `vote`.
 - `pr create` and `pr update`: `{id, url, fields}`, where `fields` is Azure DevOps' complete pull-request object.
+- `pr vote`: Azure DevOps' complete reviewer object (`IdentityRefWithVote`), including the resulting `vote` and `isRequired`.
+- `pr thread-status`: Azure DevOps' complete thread object, including the resulting `status`.
 
 The JSON output contracts for work items are:
 

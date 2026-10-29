@@ -44,6 +44,10 @@ const HELP: &str = "Usage:
       [--tags TAGS] [--profile NAME]
   ado pr open TARGET [--profile NAME]
   ado pr threads [TARGET] [--profile NAME]
+  ado pr vote [TARGET] --vote approve|approve-with-suggestions|wait|reject|reset
+      [--profile NAME]
+  ado pr thread-status [TARGET] --thread-id N
+      --status active|fixed|wontfix|closed|bydesign|pending [--profile NAME]
   ado pr changes [TARGET] [--profile NAME] [--iteration N]
   ado pr clone [TARGET] [--profile NAME] [--directory PATH]
   ado pr diff [TARGET] [--profile NAME] [--directory PATH]

@@ -73,6 +73,17 @@ pub enum CliCommand {
         target: PullRequestTarget,
         profile: Option<String>,
     },
+    PrVote {
+        target: PullRequestTarget,
+        vote: String,
+        profile: Option<String>,
+    },
+    PrThreadStatus {
+        target: PullRequestTarget,
+        thread_id: i64,
+        status: String,
+        profile: Option<String>,
+    },
     PrChanges {
         target: PullRequestTarget,
         profile: Option<String>,
@@ -184,6 +195,8 @@ pub fn parse(arguments: &[String]) -> Result<CliCommand> {
         ("pr", "show") => parse_simple(args, true),
         ("pr", "open") => parse_pr_open(args),
         ("pr", "threads") => parse_simple(args, false),
+        ("pr", "vote") => parse_pr_vote(args),
+        ("pr", "thread-status") => parse_pr_thread_status(args),
         ("pr", "changes") => parse_changes(args),
         ("pr", "clone") => parse_checkout(args, true),
         ("pr", "diff") => parse_checkout(args, false),
@@ -633,6 +646,52 @@ fn parse_simple(args: &[String], show: bool) -> Result<CliCommand> {
     } else {
         Ok(CliCommand::PrThreads { target, profile })
     }
+}
+fn parse_pr_vote(args: &[String]) -> Result<CliCommand> {
+    let mut v = common(args, &["--vote", "--profile"])?;
+    let target = v.target()?;
+    let vote = v.required("--vote")?;
+    if ![
+        "approve",
+        "approve-with-suggestions",
+        "wait",
+        "reject",
+        "reset",
+    ]
+    .contains(&vote.as_str())
+    {
+        return Err(Error(
+            "--vote must be 'approve', 'approve-with-suggestions', 'wait', 'reject', or 'reset'."
+                .into(),
+        ));
+    }
+    Ok(CliCommand::PrVote {
+        target,
+        vote,
+        profile: v.take("--profile"),
+    })
+}
+fn parse_pr_thread_status(args: &[String]) -> Result<CliCommand> {
+    let mut v = common(args, &["--thread-id", "--status", "--profile"])?;
+    let target = v.target()?;
+    let thread_id = v.required_positive("--thread-id")?;
+    let status = v.required("--status")?;
+    if ![
+        "active", "fixed", "wontfix", "closed", "bydesign", "pending",
+    ]
+    .contains(&status.as_str())
+    {
+        return Err(Error(
+            "--status must be 'active', 'fixed', 'wontfix', 'closed', 'bydesign', or 'pending'."
+                .into(),
+        ));
+    }
+    Ok(CliCommand::PrThreadStatus {
+        target,
+        thread_id,
+        status,
+        profile: v.take("--profile"),
+    })
 }
 fn parse_pr_open(args: &[String]) -> Result<CliCommand> {
     let mut v = common(args, &["--profile"])?;

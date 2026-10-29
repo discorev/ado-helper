@@ -414,6 +414,35 @@ impl<T: HttpTransport> AdoClient<T> {
         )
     }
 
+    pub fn update_thread_status(
+        &self,
+        project: &str,
+        repo: &str,
+        id: i64,
+        thread_id: i64,
+        status: &str,
+    ) -> Result<Value> {
+        self.validate_resource(project, repo, id)?;
+        if thread_id <= 0 {
+            return Err(Error("Thread ID must be greater than zero.".into()));
+        }
+        self.send_object(
+            "PATCH",
+            &[
+                project,
+                "_apis",
+                "git",
+                "repositories",
+                repo,
+                "pullRequests",
+                &id.to_string(),
+                "threads",
+                &thread_id.to_string(),
+            ],
+            &json!({"status": status}),
+        )
+    }
+
     pub fn create_top_level_thread(
         &self,
         project: &str,

@@ -76,6 +76,52 @@ impl Application {
         )?))
     }
 
+    pub(super) fn pr_vote(
+        &self,
+        target: PullRequestTarget,
+        vote: &str,
+        profile_name: Option<&str>,
+    ) -> Result<()> {
+        let r = self.resolve(target, profile_name)?;
+        let repo = repository_identity(&r.pull_request)?;
+        let identity = r.client.identity()?;
+        if identity.id != r.profile.identity.id {
+            return Err(Error(format!(
+                "The saved token authenticated as a different account. No vote was cast; run 'ado auth update {}'.",
+                r.profile.name
+            )));
+        }
+        let is_required = reviewer_is_required(&r.pull_request, &identity.id);
+        let updated = r.client.set_pull_request_vote(
+            &repo.project,
+            &repo.repository,
+            r.locator.id,
+            &identity.id,
+            vote_value(vote),
+            is_required,
+        )?;
+        write_json(&updated)
+    }
+
+    pub(super) fn pr_thread_status(
+        &self,
+        target: PullRequestTarget,
+        thread_id: i64,
+        status: &str,
+        profile_name: Option<&str>,
+    ) -> Result<()> {
+        let r = self.resolve(target, profile_name)?;
+        let repo = repository_identity(&r.pull_request)?;
+        let updated = r.client.update_thread_status(
+            &repo.project,
+            &repo.repository,
+            r.locator.id,
+            thread_id,
+            thread_status_value(status),
+        )?;
+        write_json(&updated)
+    }
+
     pub(super) fn pr_changes(
         &self,
         target: PullRequestTarget,
@@ -466,6 +512,40 @@ impl Application {
     }
 }
 
+fn vote_value(vote: &str) -> i32 {
+    match vote {
+        "approve" => 10,
+        "approve-with-suggestions" => 5,
+        "wait" => -5,
+        "reject" => -10,
+        "reset" => 0,
+        _ => unreachable!(),
+    }
+}
+fn thread_status_value(status: &str) -> &'static str {
+    match status {
+        "active" => "active",
+        "fixed" => "fixed",
+        "wontfix" => "wontFix",
+        "closed" => "closed",
+        "bydesign" => "byDesign",
+        "pending" => "pending",
+        _ => unreachable!(),
+    }
+}
+fn reviewer_is_required(pull_request: &Value, identity_id: &str) -> Option<bool> {
+    pull_request
+        .get("reviewers")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|reviewer| reviewer.get("id").and_then(Value::as_str) == Some(identity_id))
+        .map(|reviewer| {
+            reviewer
+                .get("isRequired")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+}
 fn repository_identity(v: &Value) -> Result<RepositoryIdentity> {
     let repo = v.get("repository").ok_or_else(|| {
         Error("Azure DevOps pull request response is missing repository project and name.".into())
@@ -885,5 +965,38 @@ mod tests {
             parse_labels(" urgent,API, api, ,needs review "),
             vec!["API", "needs review", "urgent"]
         );
+    }
+
+    #[test]
+    fn vote_strings_map_to_azure_devops_vote_values() {
+        assert_eq!(vote_value("approve"), 10);
+        assert_eq!(vote_value("approve-with-suggestions"), 5);
+        assert_eq!(vote_value("reset"), 0);
+        assert_eq!(vote_value("wait"), -5);
+        assert_eq!(vote_value("reject"), -10);
+    }
+
+    #[test]
+    fn thread_status_strings_map_to_azure_devops_enum_casing() {
+        assert_eq!(thread_status_value("active"), "active");
+        assert_eq!(thread_status_value("fixed"), "fixed");
+        assert_eq!(thread_status_value("wontfix"), "wontFix");
+        assert_eq!(thread_status_value("closed"), "closed");
+        assert_eq!(thread_status_value("bydesign"), "byDesign");
+        assert_eq!(thread_status_value("pending"), "pending");
+    }
+
+    #[test]
+    fn reviewer_is_required_reads_the_matching_reviewer_entry() {
+        let pull_request = json!({
+            "reviewers": [
+                {"id": "ollie", "isRequired": true},
+                {"id": "ada"},
+            ]
+        });
+        assert_eq!(reviewer_is_required(&pull_request, "ollie"), Some(true));
+        assert_eq!(reviewer_is_required(&pull_request, "ada"), Some(false));
+        assert_eq!(reviewer_is_required(&pull_request, "grace"), None);
+        assert_eq!(reviewer_is_required(&json!({}), "ollie"), None);
     }
 }

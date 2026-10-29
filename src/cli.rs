@@ -59,6 +59,13 @@ pub enum CliCommand {
         draft: Option<bool>,
         add_reviewers: Vec<String>,
         tags: Option<String>,
+        target_branch: Option<String>,
+        profile: Option<String>,
+    },
+    PrComplete {
+        target: PullRequestTarget,
+        merge_strategy: String,
+        delete_source_branch: bool,
         profile: Option<String>,
     },
     PrShow {
@@ -192,6 +199,7 @@ pub fn parse(arguments: &[String]) -> Result<CliCommand> {
         ("pr", "query") => parse_pr_query(args),
         ("pr", "create") => parse_pr_create(args),
         ("pr", "update") => parse_pr_update(args),
+        ("pr", "complete") => parse_pr_complete(args),
         ("pr", "show") => parse_simple(args, true),
         ("pr", "open") => parse_pr_open(args),
         ("pr", "threads") => parse_simple(args, false),
@@ -579,6 +587,7 @@ fn parse_pr_update(args: &[String]) -> Result<CliCommand> {
             "--description-file",
             "--status",
             "--tags",
+            "--target",
             "--profile",
         ],
         &["--add-reviewer"],
@@ -614,12 +623,20 @@ fn parse_pr_update(args: &[String]) -> Result<CliCommand> {
         return Err(Error("--add-reviewer must not be empty.".into()));
     }
     let tags = values.take("--tags");
+    let target_branch = values.take("--target");
+    if target_branch
+        .as_deref()
+        .is_some_and(|branch| branch.trim().is_empty())
+    {
+        return Err(Error("--target must not be empty.".into()));
+    }
     if title.is_none()
         && description_file.is_none()
         && status.is_none()
         && draft.is_none()
         && add_reviewers.is_empty()
         && tags.is_none()
+        && target_branch.is_none()
     {
         return Err(Error(
             "pr update requires at least one field option.".into(),
@@ -633,6 +650,34 @@ fn parse_pr_update(args: &[String]) -> Result<CliCommand> {
         draft,
         add_reviewers,
         tags,
+        target_branch,
+        profile: values.take("--profile"),
+    })
+}
+
+const MERGE_STRATEGIES: [&str; 4] = ["no-fast-forward", "squash", "rebase", "rebase-merge"];
+
+fn parse_pr_complete(args: &[String]) -> Result<CliCommand> {
+    let mut values = multi_values(
+        args,
+        &["--merge-strategy", "--profile"],
+        &[],
+        &["--delete-source-branch"],
+    )?;
+    let target = values.target()?;
+    let merge_strategy = values
+        .take("--merge-strategy")
+        .unwrap_or_else(|| "no-fast-forward".into());
+    if !MERGE_STRATEGIES.contains(&merge_strategy.as_str()) {
+        return Err(Error(
+            "--merge-strategy must be 'no-fast-forward', 'squash', 'rebase', or 'rebase-merge'."
+                .into(),
+        ));
+    }
+    Ok(CliCommand::PrComplete {
+        target,
+        merge_strategy,
+        delete_source_branch: values.flags.contains("--delete-source-branch"),
         profile: values.take("--profile"),
     })
 }

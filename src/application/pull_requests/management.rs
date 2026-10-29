@@ -165,11 +165,24 @@ impl Application {
         draft: Option<bool>,
         add_reviewers: &[String],
         tags: Option<&str>,
+        target_branch: Option<&str>,
         profile_name: Option<&str>,
     ) -> Result<()> {
         let resolved = self.resolve(target, profile_name)?;
         let repository = repository_identity(&resolved.pull_request)?;
         let mut body = Map::new();
+        // Azure rejects a retarget to the branch the PR already targets, so skip it.
+        let retarget = match target_branch {
+            Some(branch) => {
+                let reference = branch_ref(branch)?;
+                (resolved.pull_request["targetRefName"].as_str() != Some(reference.as_str()))
+                    .then_some(reference)
+            }
+            None => None,
+        };
+        if let Some(reference) = &retarget {
+            body.insert("targetRefName".into(), Value::String(reference.clone()));
+        }
         if let Some(value) = title {
             body.insert("title".into(), Value::String(value.into()));
         }
@@ -188,6 +201,15 @@ impl Application {
                 &repository.repository,
                 resolved.locator.id,
                 &Value::Object(body),
+            )?;
+        }
+        if retarget.is_some() {
+            // The preview merge is computed against the old target; queue a new one.
+            resolved.client.update_pull_request(
+                &repository.project,
+                &repository.repository,
+                resolved.locator.id,
+                &json!({"mergeStatus": "queued"}),
             )?;
         }
         for reviewer in add_reviewers {

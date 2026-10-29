@@ -488,6 +488,7 @@ fn parses_pr_update_and_requires_a_field() {
             draft: Some(false),
             add_reviewers: vec!["ada@example.test".into(), "grace@example.test".into()],
             tags: Some("api,ready".into()),
+            target_branch: None,
             profile: Some("work".into()),
         }
     );
@@ -501,15 +502,79 @@ fn parses_pr_update_and_requires_a_field() {
             draft: Some(true),
             add_reviewers: vec![],
             tags: None,
+            target_branch: None,
+            profile: None,
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&["pr", "update", "42", "--target", "main"])).unwrap(),
+        CliCommand::PrUpdate {
+            target: PullRequestTarget::Number(42),
+            title: None,
+            description_file: None,
+            status: None,
+            draft: None,
+            add_reviewers: vec![],
+            tags: None,
+            target_branch: Some("main".into()),
             profile: None,
         }
     );
     for args in [
+        svec(&["pr", "update", "42", "--target", " "]),
         svec(&["pr", "update"]),
         svec(&["pr", "update", "42", "--status", "completed"]),
         svec(&["pr", "update", "42", "--draft", "--ready"]),
     ] {
         assert!(cli::parse(&args).is_err());
+    }
+}
+
+#[test]
+fn parses_pr_complete_defaults_and_validates_strategy() {
+    assert_eq!(
+        cli::parse(&svec(&["pr", "complete", "42"])).unwrap(),
+        CliCommand::PrComplete {
+            target: PullRequestTarget::Number(42),
+            merge_strategy: "no-fast-forward".into(),
+            delete_source_branch: false,
+            profile: None,
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "complete",
+            "--merge-strategy",
+            "rebase-merge",
+            "--delete-source-branch",
+            "--profile",
+            "work",
+        ]))
+        .unwrap(),
+        CliCommand::PrComplete {
+            target: PullRequestTarget::CurrentBranch,
+            merge_strategy: "rebase-merge".into(),
+            delete_source_branch: true,
+            profile: Some("work".into()),
+        }
+    );
+    for strategy in ["squash", "rebase", "no-fast-forward"] {
+        assert!(cli::parse(&svec(&["pr", "complete", "--merge-strategy", strategy])).is_ok());
+    }
+    for args in [
+        svec(&["pr", "complete", "42", "--merge-strategy", "fast-forward"]),
+        svec(&["pr", "complete", "42", "--merge-strategy"]),
+        svec(&[
+            "pr",
+            "complete",
+            "42",
+            "--delete-source-branch",
+            "--delete-source-branch",
+        ]),
+        svec(&["pr", "complete", "42", "43"]),
+    ] {
+        assert!(cli::parse(&args).is_err(), "{args:?}");
     }
 }
 

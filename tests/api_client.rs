@@ -767,6 +767,38 @@ fn reviewer_lookup_rejects_missing_or_ambiguous_identities() {
 }
 
 #[test]
+fn update_pull_request_sends_completion_and_retarget_bodies() {
+    let m = Mock::new(|r, index| {
+        assert_eq!(r.method, "PATCH");
+        assert_eq!(
+            r.url.path(),
+            "/acme/Project/_apis/git/repositories/Repo/pullrequests/42"
+        );
+        assert_eq!(r.url.query(), Some("api-version=7.1"));
+        let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+        match index {
+            0 => assert_eq!(
+                body,
+                json!({"status": "completed", "lastMergeSourceCommit": {"commitId": "abc"}, "completionOptions": {"mergeStrategy": "noFastForward", "deleteSourceBranch": false}})
+            ),
+            1 => assert_eq!(body, json!({"targetRefName": "refs/heads/main"})),
+            2 => assert_eq!(body, json!({"mergeStatus": "queued"})),
+            _ => panic!("unexpected request"),
+        }
+        Ok(response(r, 200, &json!({"pullRequestId": 42}), &[]))
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    for body in [
+        json!({"status": "completed", "lastMergeSourceCommit": {"commitId": "abc"}, "completionOptions": {"mergeStrategy": "noFastForward", "deleteSourceBranch": false}}),
+        json!({"targetRefName": "refs/heads/main"}),
+        json!({"mergeStatus": "queued"}),
+    ] {
+        c.update_pull_request("Project", "Repo", 42, &body).unwrap();
+    }
+    assert_eq!(c.transport.count(), 3);
+}
+
+#[test]
 fn set_pull_request_vote_sends_vote_and_optional_is_required() {
     let m = Mock::new(|r, index| {
         assert_eq!(r.method, "PUT");

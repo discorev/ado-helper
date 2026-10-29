@@ -103,6 +103,22 @@ impl Application {
         write_json(&updated)
     }
 
+    pub(super) fn pr_complete(
+        &self,
+        target: PullRequestTarget,
+        merge_strategy: &str,
+        delete_source_branch: bool,
+        profile_name: Option<&str>,
+    ) -> Result<()> {
+        let r = self.resolve(target, profile_name)?;
+        let repo = repository_identity(&r.pull_request)?;
+        let body = completion_body(&r.pull_request, merge_strategy, delete_source_branch)?;
+        let updated =
+            r.client
+                .update_pull_request(&repo.project, &repo.repository, r.locator.id, &body)?;
+        write_json(&updated)
+    }
+
     pub(super) fn pr_thread_status(
         &self,
         target: PullRequestTarget,
@@ -522,6 +538,51 @@ fn vote_value(vote: &str) -> i32 {
         _ => unreachable!(),
     }
 }
+fn merge_strategy_value(strategy: &str) -> &'static str {
+    match strategy {
+        "no-fast-forward" => "noFastForward",
+        "squash" => "squash",
+        "rebase" => "rebase",
+        "rebase-merge" => "rebaseMerge",
+        _ => unreachable!(),
+    }
+}
+
+fn completion_body(
+    pull_request: &Value,
+    merge_strategy: &str,
+    delete_source_branch: bool,
+) -> Result<Value> {
+    if pull_request["isDraft"].as_bool() == Some(true) {
+        return Err(Error(
+            "The pull request is a draft. Mark it ready before completing it.".into(),
+        ));
+    }
+    if pull_request["status"].as_str() != Some("active") {
+        return Err(Error(
+            "Only an active pull request can be completed.".into(),
+        ));
+    }
+    let merge_status = pull_request["mergeStatus"].as_str().unwrap_or("notSet");
+    if merge_status != "succeeded" {
+        return Err(Error(format!(
+            "The pull request merge status is '{merge_status}', not 'succeeded'. Nothing was completed."
+        )));
+    }
+    let commit = pull_request["lastMergeSourceCommit"]["commitId"]
+        .as_str()
+        .filter(|commit| !commit.is_empty())
+        .ok_or_else(|| Error("The pull request has no source commit to complete.".into()))?;
+    Ok(json!({
+        "status": "completed",
+        "lastMergeSourceCommit": {"commitId": commit},
+        "completionOptions": {
+            "mergeStrategy": merge_strategy_value(merge_strategy),
+            "deleteSourceBranch": delete_source_branch,
+        },
+    }))
+}
+
 fn thread_status_value(status: &str) -> &'static str {
     match status {
         "active" => "active",
@@ -827,6 +888,40 @@ fn validate_thread(v: &Value, id: i64, path: &str, line: i64, end: i64, side: &s
 mod tests {
     use super::management::{parse_labels, pull_request_url, validate_source_tip};
     use super::*;
+
+    #[test]
+    fn completion_body_maps_strategy_and_pins_source_commit() {
+        let pr = json!({"status": "active", "isDraft": false, "mergeStatus": "succeeded", "lastMergeSourceCommit": {"commitId": "abc"}});
+        for (cli, ado) in [
+            ("no-fast-forward", "noFastForward"),
+            ("squash", "squash"),
+            ("rebase", "rebase"),
+            ("rebase-merge", "rebaseMerge"),
+        ] {
+            assert_eq!(
+                completion_body(&pr, cli, true).unwrap(),
+                json!({"status": "completed", "lastMergeSourceCommit": {"commitId": "abc"}, "completionOptions": {"mergeStrategy": ado, "deleteSourceBranch": true}})
+            );
+        }
+    }
+
+    #[test]
+    fn completion_body_refuses_draft_inactive_and_unmerged() {
+        let ok = json!({"status": "active", "isDraft": false, "mergeStatus": "succeeded", "lastMergeSourceCommit": {"commitId": "abc"}});
+        assert!(completion_body(&ok, "squash", false).is_ok());
+        for (field, value) in [
+            ("isDraft", json!(true)),
+            ("status", json!("abandoned")),
+            ("mergeStatus", json!("conflicts")),
+            ("mergeStatus", json!("queued")),
+            ("mergeStatus", Value::Null),
+            ("lastMergeSourceCommit", Value::Null),
+        ] {
+            let mut pr = ok.clone();
+            pr[field] = value;
+            assert!(completion_body(&pr, "squash", false).is_err(), "{field}");
+        }
+    }
 
     #[test]
     fn top_level_readback_checks_content_author_and_placement() {

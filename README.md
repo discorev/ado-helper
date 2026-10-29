@@ -57,6 +57,8 @@ ado pr update 123 --ready --add-reviewer grace@example.com --tags "api,approved"
 ado pr open 123
 ado pr threads https://dev.azure.com/ORG/PROJECT/_git/REPO/pullrequest/123
 ado pr vote 123 --vote approve
+ado pr update 124 --target main
+ado pr complete 123 --merge-strategy squash --delete-source-branch
 ado pr thread-status 123 --thread-id 456 --status fixed
 ado pr changes 123 --iteration 4
 ado pr clone 123
@@ -67,7 +69,9 @@ ado pr diff 123 --directory ~/Developer/ado-reviews/custom
 
 `pr create` derives the organisation, project and repository from the current Azure Git remote. The source defaults to the current branch and the target defaults to the repository's default branch. The source must already exist on the remote, and when it is the current branch its remote tip must equal local `HEAD`; `ado` never pushes. Repeat `--reviewer` and `--work-item` to add more than one. `--tags` is a comma-separated PR-label list.
 
-`pr update` accepts the same URL, number or current-branch target resolution as other PR commands and requires at least one field option. Use `--draft` or `--ready` to change draft state, `--status active|abandoned` to change status, and repeat `--add-reviewer` as needed. Reviewers accept an email, unique name or identity GUID; anything other than a GUID is resolved through the organisation's identity service and must match exactly one identity. Supplying `--tags` replaces the complete PR-label set; use an empty value to clear it.
+`pr update` accepts the same URL, number or current-branch target resolution as other PR commands and requires at least one field option. Use `--draft` or `--ready` to change draft state, `--status active|abandoned` to change status, and repeat `--add-reviewer` as needed. Reviewers accept an email, unique name or identity GUID; anything other than a GUID is resolved through the organisation's identity service and must match exactly one identity. Supplying `--tags` replaces the complete PR-label set; use an empty value to clear it. `--target BRANCH` retargets the PR (for example after the PR it was stacked on has merged). It reads the current target first and does nothing if the PR already targets that branch, because Azure DevOps returns 400 for a same-target retarget. After a retarget it sends `mergeStatus: queued` to make Azure DevOps recompute the preview merge against the new target; check `mergeStatus` with `ado pr show` before completing.
+
+`pr complete` completes the PR using `--merge-strategy no-fast-forward|squash|rebase|rebase-merge` (default `no-fast-forward`). It keeps the source branch unless `--delete-source-branch` is given. It refuses a draft PR, a PR that is not active, and a PR whose `mergeStatus` is not `succeeded`. It pins the merge to the PR's current source commit (`lastMergeSourceCommit`), so a push after you looked is rejected rather than merged. Azure DevOps may finish the merge asynchronously; confirm with `ado pr show`.
 
 `pr vote` sets the authenticated user's vote: `--vote approve` (10), `approve-with-suggestions` (5), `reset` (0), `wait` (-5), or `reject` (-10). It reads the current reviewer entry, if any, and sends `isRequired` back unchanged so voting never drops a required-reviewer flag. `pr thread-status` sets a thread's resolution with `--thread-id N --status active|fixed|wontfix|closed|bydesign|pending`; get thread IDs from `ado pr threads`.
 
@@ -92,7 +96,7 @@ ado pr comment 123 --top-level --body-file /tmp/comment.txt \
   --commit 0123456789abcdef0123456789abcdef01234567
 ```
 
-Top-level comments require the current source commit but no file or iteration context. Mixing `--top-level` with inline anchor options is rejected. Both modes verify the posting identity and read back the new thread; top-level verification checks the exact body, author and absence of a file anchor. If submission or verification is uncertain, inspect `ado pr threads` before retrying to avoid duplicates. Authentication stays inside `ado` using its native credential store; no external token extraction is needed. There is no command for merges.
+Top-level comments require the current source commit but no file or iteration context. Mixing `--top-level` with inline anchor options is rejected. Both modes verify the posting identity and read back the new thread; top-level verification checks the exact body, author and absence of a file anchor. If submission or verification is uncertain, inspect `ado pr threads` before retrying to avoid duplicates. Authentication stays inside `ado` using its native credential store; no external token extraction is needed.
 
 Edit an existing comment authored by the authenticated account using its thread and comment IDs from `ado pr threads`:
 
@@ -123,6 +127,7 @@ The JSON output contracts for pull-request mutations and queries are:
 
 - `pr query`: an array of `{id, title, status, isDraft, creator, source, target, reviewers, url}`. `creator` and each reviewer's `identity` use the unique name, falling back to display name or `null`; reviewer entries also include `vote`.
 - `pr create` and `pr update`: `{id, url, fields}`, where `fields` is Azure DevOps' complete pull-request object.
+- `pr complete`: Azure DevOps' complete pull-request object as returned by the update, which may still show `status: active` while the merge finishes.
 - `pr vote`: Azure DevOps' complete reviewer object (`IdentityRefWithVote`), including the resulting `vote` and `isRequired`.
 - `pr thread-status`: Azure DevOps' complete thread object, including the resulting `status`.
 

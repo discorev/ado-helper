@@ -78,6 +78,7 @@ impl Application {
                 draft,
                 add_reviewers,
                 tags,
+                target_branch,
                 profile,
             } => self.pr_update(
                 target,
@@ -87,6 +88,18 @@ impl Application {
                 draft,
                 &add_reviewers,
                 tags.as_deref(),
+                target_branch.as_deref(),
+                profile.as_deref(),
+            )?,
+            CliCommand::PrComplete {
+                target,
+                merge_strategy,
+                delete_source_branch,
+                profile,
+            } => self.pr_complete(
+                target,
+                &merge_strategy,
+                delete_source_branch,
                 profile.as_deref(),
             )?,
             CliCommand::PrShow { target, profile } => self.pr_show(target, profile.as_deref())?,

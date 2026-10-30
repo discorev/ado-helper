@@ -410,6 +410,103 @@ impl Application {
         write_json(&created)
     }
 
+    pub(super) fn reply_comment(
+        &self,
+        target: PullRequestTarget,
+        profile_name: Option<&str>,
+        thread_id: i64,
+        parent_comment_id: Option<i64>,
+        body_file: &str,
+    ) -> Result<()> {
+        let r = self.resolve(target, profile_name)?;
+        let repo = repository_identity(&r.pull_request)?;
+        let body = read_body(body_file)?;
+        let posting = r.client.identity()?;
+        if posting.id != r.profile.identity.id {
+            return Err(Error(format!(
+                "The saved token authenticated as a different account. No comment was posted; run 'ado auth update {}'.",
+                r.profile.name
+            )));
+        }
+        let threads = r
+            .client
+            .threads(&repo.project, &repo.repository, r.locator.id)?;
+        let parent = reply_parent(&threads, thread_id, parent_comment_id)?;
+        let created = r.client.create_comment(&repo.project, &repo.repository, r.locator.id, thread_id, parent, &body)
+            .map_err(|e| Error(format!("Reply submission was not confirmed: {e} Inspect thread {thread_id} before retrying; the request may have reached Azure DevOps.")))?;
+        let Some(comment_id) = created.get("id").and_then(integer).filter(|id| *id > 0) else {
+            return Err(Error(format!(
+                "The reply was created, but Azure DevOps returned no comment ID. Do not retry automatically; inspect thread {thread_id} first."
+            )));
+        };
+        let verify = (|| {
+            validate_reply(&created, comment_id, parent, &body, &posting.id)?;
+            let threads = r
+                .client
+                .threads(&repo.project, &repo.repository, r.locator.id)?;
+            let comment = threads
+                .iter()
+                .find(|thread| thread.get("id").and_then(integer) == Some(thread_id))
+                .and_then(|thread| thread.get("comments").and_then(Value::as_array))
+                .and_then(|comments| {
+                    comments
+                        .iter()
+                        .find(|comment| comment.get("id").and_then(integer) == Some(comment_id))
+                })
+                .ok_or_else(|| {
+                    Error("the new reply was absent from the immediate readback".into())
+                })?;
+            validate_reply(comment, comment_id, parent, &body, &posting.id)
+        })();
+        if let Err(e) = verify {
+            return Err(Error(format!(
+                "Reply {comment_id} in thread {thread_id} was created, but verification failed: {e}. Do not retry automatically; inspect that thread first."
+            )));
+        }
+        write_json(&created)
+    }
+
+    pub(super) fn delete_comment(
+        &self,
+        target: PullRequestTarget,
+        profile_name: Option<&str>,
+        thread_id: i64,
+        comment_id: i64,
+        expected_body_file: &str,
+    ) -> Result<()> {
+        let r = self.resolve(target, profile_name)?;
+        let repo = repository_identity(&r.pull_request)?;
+        let expected = read_body(expected_body_file)?;
+        let posting = r.client.identity()?;
+        if posting.id != r.profile.identity.id {
+            return Err(Error(
+                "The saved token authenticated as a different account. No comment was deleted."
+                    .into(),
+            ));
+        }
+        let threads = r
+            .client
+            .threads(&repo.project, &repo.repository, r.locator.id)?;
+        validate_edit_target(&threads, thread_id, comment_id, &posting.id, &expected)?;
+        r.client
+            .delete_comment(&repo.project, &repo.repository, r.locator.id, thread_id, comment_id)
+            .map_err(|e| Error(format!("Comment deletion was not confirmed: {e} Inspect thread {thread_id} before retrying; the request may have reached Azure DevOps.")))?;
+        let verify = (|| {
+            let threads = r
+                .client
+                .threads(&repo.project, &repo.repository, r.locator.id)?;
+            validate_deleted(&threads, thread_id, comment_id)
+        })();
+        if let Err(e) = verify {
+            return Err(Error(format!(
+                "Comment {comment_id} in thread {thread_id} was deleted, but verification failed: {e}. Inspect that thread before retrying."
+            )));
+        }
+        write_json(
+            &json!({"pullRequestId": r.locator.id, "threadId": thread_id, "commentId": comment_id, "deleted": true}),
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn comment(
         &self,
@@ -825,7 +922,7 @@ fn validate_edit_target(
         || comment.get("isDeleted").and_then(Value::as_bool) == Some(true)
     {
         return Err(Error(
-            "Only the authenticated user's own, undeleted comment may be edited.".into(),
+            "Only the authenticated user's own, undeleted comment may be edited or deleted.".into(),
         ));
     }
     // Tolerate the single trailing newline that `echo` or `jq -r` add to the file.
@@ -836,11 +933,91 @@ fn validate_edit_target(
     let content = comment.get("content").and_then(Value::as_str);
     if content != Some(expected) && content != Some(trimmed) {
         return Err(Error(
-            "The comment text changed; reread it and refresh --expected-body-file before editing."
+            "The comment text changed; reread it and refresh --expected-body-file before retrying."
                 .into(),
         ));
     }
     Ok(())
+}
+
+fn reply_parent(threads: &[Value], thread_id: i64, requested: Option<i64>) -> Result<i64> {
+    let thread = threads
+        .iter()
+        .find(|t| {
+            t.get("id").and_then(integer) == Some(thread_id)
+                && t.get("isDeleted").and_then(Value::as_bool) != Some(true)
+        })
+        .ok_or_else(|| Error(format!("Thread {thread_id} was not found.")))?;
+    let comments: &[Value] = thread
+        .get("comments")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    match requested {
+        Some(parent) => {
+            let found = comments.iter().any(|comment| {
+                comment.get("id").and_then(integer) == Some(parent)
+                    && comment.get("isDeleted").and_then(Value::as_bool) != Some(true)
+            });
+            if found {
+                Ok(parent)
+            } else {
+                Err(Error(format!(
+                    "Comment {parent} was not found in thread {thread_id}."
+                )))
+            }
+        }
+        None => comments
+            .iter()
+            .filter(|comment| comment.get("isDeleted").and_then(Value::as_bool) != Some(true))
+            .filter_map(|comment| comment.get("id").and_then(integer))
+            .min()
+            .ok_or_else(|| {
+                Error(format!(
+                    "Thread {thread_id} has no undeleted comment to reply to."
+                ))
+            }),
+    }
+}
+
+fn validate_reply(comment: &Value, id: i64, parent: i64, body: &str, author: &str) -> Result<()> {
+    if comment.get("id").and_then(integer) == Some(id)
+        && comment.get("content").and_then(Value::as_str) == Some(body)
+        && comment.pointer("/author/id").and_then(Value::as_str) == Some(author)
+        && comment.get("parentCommentId").and_then(integer) == Some(parent)
+        && comment.get("isDeleted").and_then(Value::as_bool) != Some(true)
+    {
+        Ok(())
+    } else {
+        Err(Error(
+            "comment readback did not match the requested reply, parent, body and author".into(),
+        ))
+    }
+}
+
+fn validate_deleted(threads: &[Value], thread_id: i64, comment_id: i64) -> Result<()> {
+    let still_present = threads
+        .iter()
+        .find(|t| t.get("id").and_then(integer) == Some(thread_id))
+        .is_some_and(|thread| {
+            thread.get("isDeleted").and_then(Value::as_bool) != Some(true)
+                && thread
+                    .get("comments")
+                    .and_then(Value::as_array)
+                    .is_some_and(|comments| {
+                        comments.iter().any(|comment| {
+                            comment.get("id").and_then(integer) == Some(comment_id)
+                                && comment.get("isDeleted").and_then(Value::as_bool) != Some(true)
+                        })
+                    })
+        });
+    if still_present {
+        Err(Error(
+            "the comment is still present in the immediate readback".into(),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn validate_top_level_thread(v: &Value, id: i64, body: &str, author: &str) -> Result<()> {
@@ -984,6 +1161,69 @@ mod tests {
         let mut deleted = thread;
         deleted["isDeleted"] = json!(true);
         assert!(validate_edit_target(&[deleted], 7, 1, "ollie", "before").is_err());
+    }
+
+    #[test]
+    fn reply_parent_defaults_to_lowest_undeleted_comment_id_regardless_of_order() {
+        let thread = json!({"id": 7, "comments": [
+            {"id": 3},
+            {"id": 1},
+            {"id": 2},
+        ]});
+        assert_eq!(
+            reply_parent(std::slice::from_ref(&thread), 7, None).unwrap(),
+            1
+        );
+        let mut without_one = thread.clone();
+        without_one["comments"][1]["isDeleted"] = json!(true);
+        assert_eq!(reply_parent(&[without_one], 7, None).unwrap(), 2);
+    }
+
+    #[test]
+    fn reply_parent_honours_explicit_parent_and_rejects_missing_or_deleted() {
+        let thread = json!({"id": 7, "comments": [
+            {"id": 1},
+            {"id": 2, "isDeleted": true},
+        ]});
+        assert_eq!(
+            reply_parent(std::slice::from_ref(&thread), 7, Some(1)).unwrap(),
+            1
+        );
+        assert!(reply_parent(std::slice::from_ref(&thread), 7, Some(2)).is_err());
+        assert!(reply_parent(std::slice::from_ref(&thread), 7, Some(99)).is_err());
+        assert!(reply_parent(&[], 7, Some(1)).is_err());
+        assert!(reply_parent(&[], 7, None).is_err());
+        let mut deleted_thread = thread;
+        deleted_thread["isDeleted"] = json!(true);
+        assert!(reply_parent(&[deleted_thread.clone()], 7, Some(1)).is_err());
+        assert!(reply_parent(&[deleted_thread], 7, None).is_err());
+    }
+
+    #[test]
+    fn validate_reply_checks_id_content_author_parent_and_deletion() {
+        let comment =
+            json!({"id": 5, "content": "On it", "author": {"id": "ollie"}, "parentCommentId": 1});
+        assert!(validate_reply(&comment, 5, 1, "On it", "ollie").is_ok());
+        assert!(validate_reply(&comment, 6, 1, "On it", "ollie").is_err());
+        assert!(validate_reply(&comment, 5, 2, "On it", "ollie").is_err());
+        assert!(validate_reply(&comment, 5, 1, "other", "ollie").is_err());
+        assert!(validate_reply(&comment, 5, 1, "On it", "other").is_err());
+        let mut deleted = comment;
+        deleted["isDeleted"] = json!(true);
+        assert!(validate_reply(&deleted, 5, 1, "On it", "ollie").is_err());
+    }
+
+    #[test]
+    fn validate_deleted_ok_when_comment_or_thread_is_gone() {
+        assert!(validate_deleted(&[], 7, 1).is_ok());
+        let deleted_thread = json!({"id": 7, "isDeleted": true, "comments": [{"id": 1}]});
+        assert!(validate_deleted(std::slice::from_ref(&deleted_thread), 7, 1).is_ok());
+        let comment_absent = json!({"id": 7, "comments": [{"id": 2}]});
+        assert!(validate_deleted(std::slice::from_ref(&comment_absent), 7, 1).is_ok());
+        let comment_deleted = json!({"id": 7, "comments": [{"id": 1, "isDeleted": true}]});
+        assert!(validate_deleted(std::slice::from_ref(&comment_deleted), 7, 1).is_ok());
+        let still_present = json!({"id": 7, "comments": [{"id": 1}]});
+        assert!(validate_deleted(&[still_present], 7, 1).is_err());
     }
 
     #[test]

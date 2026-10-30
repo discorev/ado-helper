@@ -55,6 +55,10 @@ const HELP: &str = "Usage:
   ado pr diff [TARGET] [--profile NAME] [--directory PATH]
   ado pr edit-comment [TARGET] --thread-id N --comment-id N --body-file PATH
       --expected-body-file PATH [--profile NAME]
+  ado pr delete-comment [TARGET] --thread-id N --comment-id N
+      --expected-body-file PATH [--profile NAME]
+  ado pr comment [TARGET] --thread-id N [--parent-comment-id N] --body-file PATH
+      [--profile NAME]
   ado pr comment [TARGET] --top-level --body-file PATH --commit SHA [--profile NAME]
   ado pr comment [TARGET] --file PATH --line N [--end-line N] --side left|right
       --body-file PATH --commit SHA --iteration N --change-id N [--profile NAME]

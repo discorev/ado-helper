@@ -114,6 +114,20 @@ pub enum CliCommand {
         body_file: String,
         expected_body_file: String,
     },
+    PrDeleteComment {
+        target: PullRequestTarget,
+        profile: Option<String>,
+        thread_id: i64,
+        comment_id: i64,
+        expected_body_file: String,
+    },
+    PrReplyComment {
+        target: PullRequestTarget,
+        profile: Option<String>,
+        thread_id: i64,
+        parent_comment_id: Option<i64>,
+        body_file: String,
+    },
     PrTopLevelComment {
         target: PullRequestTarget,
         profile: Option<String>,
@@ -210,6 +224,7 @@ pub fn parse(arguments: &[String]) -> Result<CliCommand> {
         ("pr", "diff") => parse_checkout(args, false),
         ("pr", "comment") => parse_comment(args),
         ("pr", "edit-comment") => parse_edit_comment(args),
+        ("pr", "delete-comment") => parse_delete_comment(args),
         ("wi", "query") => parse_wi_query(args),
         ("wi", "show") => parse_wi_id(args, "show"),
         ("wi", "comments") => parse_wi_id(args, "comments"),
@@ -789,6 +804,30 @@ fn parse_comment(args: &[String]) -> Result<CliCommand> {
             "Option '--top-level' may only be specified once.".into(),
         ));
     }
+    let has_thread_id = args.iter().any(|arg| arg.as_str() == "--thread-id");
+    if has_thread_id && top_level == 1 {
+        return Err(Error(
+            "pr comment accepts only one of --top-level or --thread-id.".into(),
+        ));
+    }
+    if has_thread_id {
+        let mut v = common(
+            args,
+            &[
+                "--profile",
+                "--thread-id",
+                "--parent-comment-id",
+                "--body-file",
+            ],
+        )?;
+        return Ok(CliCommand::PrReplyComment {
+            target: v.target()?,
+            profile: v.take("--profile"),
+            thread_id: v.required_positive("--thread-id")?,
+            parent_comment_id: v.positive("--parent-comment-id")?,
+            body_file: v.required("--body-file")?,
+        });
+    }
     if top_level == 1 {
         let args: Vec<String> = args
             .iter()
@@ -880,6 +919,25 @@ fn parse_edit_comment(args: &[String]) -> Result<CliCommand> {
         thread_id: v.required_positive("--thread-id")?,
         comment_id: v.required_positive("--comment-id")?,
         body_file: v.required("--body-file")?,
+        expected_body_file: v.required("--expected-body-file")?,
+    })
+}
+
+fn parse_delete_comment(args: &[String]) -> Result<CliCommand> {
+    let mut v = common(
+        args,
+        &[
+            "--profile",
+            "--thread-id",
+            "--comment-id",
+            "--expected-body-file",
+        ],
+    )?;
+    Ok(CliCommand::PrDeleteComment {
+        target: v.target()?,
+        profile: v.take("--profile"),
+        thread_id: v.required_positive("--thread-id")?,
+        comment_id: v.required_positive("--comment-id")?,
         expected_body_file: v.required("--expected-body-file")?,
     })
 }

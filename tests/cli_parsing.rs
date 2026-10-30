@@ -255,6 +255,190 @@ fn parses_comment_edit_and_requires_expected_body() {
 }
 
 #[test]
+fn parses_comment_reply_with_and_without_explicit_parent() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "comment",
+            "42",
+            "--thread-id",
+            "7",
+            "--body-file",
+            "/tmp/reply",
+        ]))
+        .unwrap(),
+        CliCommand::PrReplyComment {
+            target: PullRequestTarget::Number(42),
+            profile: None,
+            thread_id: 7,
+            parent_comment_id: None,
+            body_file: "/tmp/reply".into(),
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "comment",
+            "--thread-id",
+            "7",
+            "--parent-comment-id",
+            "2",
+            "--body-file",
+            "/tmp/reply",
+            "--profile",
+            "work",
+        ]))
+        .unwrap(),
+        CliCommand::PrReplyComment {
+            target: PullRequestTarget::CurrentBranch,
+            profile: Some("work".into()),
+            thread_id: 7,
+            parent_comment_id: Some(2),
+            body_file: "/tmp/reply".into(),
+        }
+    );
+}
+
+#[test]
+fn comment_reply_rejects_mixed_modes_and_invalid_values() {
+    for args in [
+        svec(&[
+            "pr",
+            "comment",
+            "42",
+            "--top-level",
+            "--thread-id",
+            "7",
+            "--body-file",
+            "/tmp/reply",
+        ]),
+        svec(&[
+            "pr",
+            "comment",
+            "42",
+            "--thread-id",
+            "7",
+            "--commit",
+            &"a".repeat(40),
+            "--body-file",
+            "/tmp/reply",
+        ]),
+        svec(&[
+            "pr",
+            "comment",
+            "42",
+            "--thread-id",
+            "7",
+            "--file",
+            "/file",
+            "--body-file",
+            "/tmp/reply",
+        ]),
+        svec(&[
+            "pr",
+            "comment",
+            "42",
+            "--thread-id",
+            "7",
+            "--line",
+            "1",
+            "--body-file",
+            "/tmp/reply",
+        ]),
+        svec(&["pr", "comment", "42", "--thread-id", "7"]),
+        svec(&[
+            "pr",
+            "comment",
+            "42",
+            "--thread-id",
+            "0",
+            "--body-file",
+            "/tmp/reply",
+        ]),
+        svec(&[
+            "pr",
+            "comment",
+            "42",
+            "--thread-id",
+            "7",
+            "--parent-comment-id",
+            "0",
+            "--body-file",
+            "/tmp/reply",
+        ]),
+        svec(&[
+            "pr",
+            "comment",
+            "42",
+            "--parent-comment-id",
+            "1",
+            "--body-file",
+            "/tmp/reply",
+        ]),
+        svec(&[
+            "pr",
+            "comment",
+            "42",
+            "--thread-id",
+            "7",
+            "--thread-id",
+            "8",
+            "--body-file",
+            "/tmp/reply",
+        ]),
+    ] {
+        assert!(cli::parse(&args).is_err(), "{args:?}");
+    }
+}
+
+#[test]
+fn parses_delete_comment_and_requires_options() {
+    let args = svec(&[
+        "pr",
+        "delete-comment",
+        "42",
+        "--thread-id",
+        "7",
+        "--comment-id",
+        "1",
+        "--expected-body-file",
+        "/tmp/old",
+    ]);
+    assert_eq!(
+        cli::parse(&args).unwrap(),
+        CliCommand::PrDeleteComment {
+            target: PullRequestTarget::Number(42),
+            profile: None,
+            thread_id: 7,
+            comment_id: 1,
+            expected_body_file: "/tmp/old".into(),
+        }
+    );
+    for option in ["--thread-id", "--comment-id", "--expected-body-file"] {
+        let mut without_option = Vec::new();
+        let mut skip_next = false;
+        for value in &args {
+            if skip_next {
+                skip_next = false;
+                continue;
+            }
+            if value == option {
+                skip_next = true;
+                continue;
+            }
+            without_option.push(value.clone());
+        }
+        assert!(cli::parse(&without_option).is_err(), "missing {option}");
+    }
+    let mut zero_thread = args.clone();
+    zero_thread[4] = "0".into();
+    assert!(cli::parse(&zero_thread).is_err());
+    let mut zero_comment = args;
+    zero_comment[6] = "0".into();
+    assert!(cli::parse(&zero_comment).is_err());
+}
+
+#[test]
 fn parses_pr_open_with_required_target() {
     assert_eq!(
         cli::parse(&svec(&["pr", "open", "42", "--profile", "work"])).unwrap(),

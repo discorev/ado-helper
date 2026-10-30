@@ -79,6 +79,14 @@ Clone and diff use only validated Azure SSH URLs, fetch the exact source and tar
 
 For a repository you do not have locally, pass the full PR URL to `ado pr clone`; no local checkout is required. Branch discovery uses the configured upstream remote (or an unambiguous Azure remote). Use the full URL for a fork PR so its target repository is explicit.
 
+To respond to a reviewer, reply inside their existing thread; get thread IDs from `ado pr threads`:
+
+```sh
+ado pr comment 123 --thread-id 456 --body-file /tmp/reply.txt
+```
+
+The parent defaults to the thread's first comment: Azure DevOps shows a thread as a flat list, and the web UI's reply box attaches replies to that first comment by convention. Pass `--parent-comment-id` to target a specific comment instead. The command verifies the posting identity and reads the new reply back; it needs no commit, since replies are not anchored to a reviewed revision. `--top-level` is only for starting a new PR-wide discussion; never use it to answer an existing comment.
+
 Inline comments require the file context and explicit review identity. Generate or inspect the iteration changes first, then pass the exact source commit, iteration, and `changeTrackingId`:
 
 ```sh
@@ -107,6 +115,15 @@ ado pr edit-comment 123 --thread-id 456 --comment-id 1 \
 
 The expected-body file must match the current saved text exactly, apart from one optional trailing newline, so an edit based on stale text is rejected. The command patches only that comment's content and verifies the saved result. It does not create a new thread or change its status. The expected-text check happens immediately before submission; it is not a server-side atomic compare-and-swap.
 
+Delete a misplaced comment of your own with the same expected-body check as edit, to make sure you are removing the comment you think you are:
+
+```sh
+ado pr delete-comment 123 --thread-id 456 --comment-id 1 \
+  --expected-body-file /tmp/original.txt
+```
+
+Only the authenticated user's own, undeleted comment may be deleted. The command verifies that the comment is gone from the immediate readback.
+
 Work-item commands accept `--profile NAME` and `--project NAME`. The project defaults to the project in the current repository's Azure `_git` remote; if it cannot be derived, pass `--project`. The organization follows the same profile and Git-remote resolution as PR commands.
 
 ```sh
@@ -130,6 +147,8 @@ The JSON output contracts for pull-request mutations and queries are:
 - `pr complete`: Azure DevOps' complete pull-request object as returned by the update, which may still show `status: active` while the merge finishes.
 - `pr vote`: Azure DevOps' complete reviewer object (`IdentityRefWithVote`), including the resulting `vote` and `isRequired`.
 - `pr thread-status`: Azure DevOps' complete thread object, including the resulting `status`.
+- `pr comment --thread-id`: Azure DevOps' complete comment object.
+- `pr delete-comment`: `{pullRequestId, threadId, commentId, deleted}`.
 
 The JSON output contracts for work items are:
 

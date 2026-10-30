@@ -148,6 +148,32 @@ impl Application {
                 &body_file,
                 &expected_body_file,
             )?,
+            CliCommand::PrDeleteComment {
+                target,
+                profile,
+                thread_id,
+                comment_id,
+                expected_body_file,
+            } => self.delete_comment(
+                target,
+                profile.as_deref(),
+                thread_id,
+                comment_id,
+                &expected_body_file,
+            )?,
+            CliCommand::PrReplyComment {
+                target,
+                profile,
+                thread_id,
+                parent_comment_id,
+                body_file,
+            } => self.reply_comment(
+                target,
+                profile.as_deref(),
+                thread_id,
+                parent_comment_id,
+                &body_file,
+            )?,
             CliCommand::PrTopLevelComment {
                 target,
                 profile,

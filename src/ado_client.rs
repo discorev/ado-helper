@@ -414,6 +414,74 @@ impl<T: HttpTransport> AdoClient<T> {
         )
     }
 
+    pub fn create_comment(
+        &self,
+        project: &str,
+        repo: &str,
+        id: i64,
+        thread_id: i64,
+        parent_comment_id: i64,
+        body: &str,
+    ) -> Result<Value> {
+        self.validate_resource(project, repo, id)?;
+        if thread_id <= 0 || parent_comment_id <= 0 || body.trim().is_empty() {
+            return Err(Error(
+                "Comment reply requires positive thread/parent comment IDs and nonempty text."
+                    .into(),
+            ));
+        }
+        self.send_object(
+            "POST",
+            &[
+                project,
+                "_apis",
+                "git",
+                "repositories",
+                repo,
+                "pullRequests",
+                &id.to_string(),
+                "threads",
+                &thread_id.to_string(),
+                "comments",
+            ],
+            &json!({"content": body, "parentCommentId": parent_comment_id, "commentType": 1}),
+        )
+    }
+
+    pub fn delete_comment(
+        &self,
+        project: &str,
+        repo: &str,
+        id: i64,
+        thread_id: i64,
+        comment_id: i64,
+    ) -> Result<()> {
+        self.validate_resource(project, repo, id)?;
+        if thread_id <= 0 || comment_id <= 0 {
+            return Err(Error(
+                "Comment deletion requires positive thread/comment IDs.".into(),
+            ));
+        }
+        self.send_empty(
+            "DELETE",
+            &[
+                project,
+                "_apis",
+                "git",
+                "repositories",
+                repo,
+                "pullRequests",
+                &id.to_string(),
+                "threads",
+                &thread_id.to_string(),
+                "comments",
+                &comment_id.to_string(),
+            ],
+            &[],
+            Some("7.1"),
+        )
+    }
+
     pub fn update_thread_status(
         &self,
         project: &str,

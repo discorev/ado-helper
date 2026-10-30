@@ -389,6 +389,102 @@ fn comment_edit_patches_only_content_at_exact_comment() {
 }
 
 #[test]
+fn comment_reply_posts_content_parent_and_comment_type() {
+    let m = Mock::new(|r, _| {
+        assert_eq!(r.method, "POST");
+        assert_eq!(
+            r.url.path(),
+            "/acme/Project/_apis/git/repositories/Repo/pullRequests/4/threads/7/comments"
+        );
+        let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            body,
+            json!({"content": "On it", "parentCommentId": 1, "commentType": 1})
+        );
+        Ok(response(r, 200, &json!({"id": 9, "content": "On it"}), &[]))
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert_eq!(
+        c.create_comment("Project", "Repo", 4, 7, 1, "On it")
+            .unwrap()["id"],
+        9
+    );
+    assert_eq!(c.transport.count(), 1);
+}
+
+#[test]
+fn comment_reply_validates_input_without_sending() {
+    let m = Mock::new(|_, _| panic!("invalid reply must not be sent"));
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert!(
+        c.create_comment("Project", "Repo", 4, 0, 1, "On it")
+            .is_err()
+    );
+    assert!(
+        c.create_comment("Project", "Repo", 4, 7, 0, "On it")
+            .is_err()
+    );
+    assert!(
+        c.create_comment("Project", "Repo", 4, 7, 1, " \n ")
+            .is_err()
+    );
+    assert!(
+        c.create_comment("Project", "Repo", 0, 7, 1, "On it")
+            .is_err()
+    );
+    assert!(c.create_comment("", "Repo", 4, 7, 1, "On it").is_err());
+    assert_eq!(c.transport.count(), 0);
+}
+
+#[test]
+fn comment_reply_failure_is_not_retried_or_leaked() {
+    let m = Mock::new(|r, _| {
+        Ok(HttpResponse {
+            status: 503,
+            url: r.url.clone(),
+            headers: HashMap::new(),
+            body: b"private reply token".to_vec(),
+        })
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    let error = c
+        .create_comment("Project", "Repo", 4, 7, 1, "On it")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("503"));
+    assert!(!error.contains("private"));
+    assert_eq!(c.transport.count(), 1);
+}
+
+#[test]
+fn comment_delete_sends_no_body_at_exact_comment() {
+    let m = Mock::new(|r, _| {
+        assert_eq!(r.method, "DELETE");
+        assert_eq!(
+            r.url.path(),
+            "/acme/Project/_apis/git/repositories/Repo/pullRequests/4/threads/7/comments/1"
+        );
+        assert_eq!(query(r)["api-version"], "7.1");
+        assert!(r.body.is_none());
+        Ok(response(r, 204, &json!({}), &[]))
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    c.delete_comment("Project", "Repo", 4, 7, 1).unwrap();
+    assert_eq!(c.transport.count(), 1);
+}
+
+#[test]
+fn comment_delete_validates_input_without_sending() {
+    let m = Mock::new(|_, _| panic!("invalid deletion must not be sent"));
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert!(c.delete_comment("Project", "Repo", 4, 0, 1).is_err());
+    assert!(c.delete_comment("Project", "Repo", 4, 7, 0).is_err());
+    assert!(c.delete_comment("Project", "Repo", 0, 7, 1).is_err());
+    assert!(c.delete_comment("", "Repo", 4, 7, 1).is_err());
+    assert_eq!(c.transport.count(), 0);
+}
+
+#[test]
 fn wiql_batches_work_item_reads_and_preserves_query_order() {
     let expected: Vec<i64> = (1..=201).rev().collect();
     let expected_for_mock = expected.clone();

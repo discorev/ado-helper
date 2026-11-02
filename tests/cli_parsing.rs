@@ -658,6 +658,10 @@ fn parses_pr_update_and_requires_a_field() {
             "ada@example.test",
             "--add-reviewer",
             "grace@example.test",
+            "--add-required-reviewer",
+            "nick@example.test",
+            "--add-required-reviewer",
+            "olga@example.test",
             "--tags",
             "api,ready",
             "--profile",
@@ -671,6 +675,7 @@ fn parses_pr_update_and_requires_a_field() {
             status: Some("active".into()),
             draft: Some(false),
             add_reviewers: vec!["ada@example.test".into(), "grace@example.test".into()],
+            add_required_reviewers: vec!["nick@example.test".into(), "olga@example.test".into()],
             tags: Some("api,ready".into()),
             target_branch: None,
             profile: Some("work".into()),
@@ -685,6 +690,7 @@ fn parses_pr_update_and_requires_a_field() {
             status: None,
             draft: Some(true),
             add_reviewers: vec![],
+            add_required_reviewers: vec![],
             tags: None,
             target_branch: None,
             profile: None,
@@ -699,8 +705,31 @@ fn parses_pr_update_and_requires_a_field() {
             status: None,
             draft: None,
             add_reviewers: vec![],
+            add_required_reviewers: vec![],
             tags: None,
             target_branch: Some("main".into()),
+            profile: None,
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "update",
+            "42",
+            "--add-required-reviewer",
+            "nick@example.test",
+        ]))
+        .unwrap(),
+        CliCommand::PrUpdate {
+            target: PullRequestTarget::Number(42),
+            title: None,
+            description_file: None,
+            status: None,
+            draft: None,
+            add_reviewers: vec![],
+            add_required_reviewers: vec!["nick@example.test".into()],
+            tags: None,
+            target_branch: None,
             profile: None,
         }
     );
@@ -709,6 +738,16 @@ fn parses_pr_update_and_requires_a_field() {
         svec(&["pr", "update"]),
         svec(&["pr", "update", "42", "--status", "completed"]),
         svec(&["pr", "update", "42", "--draft", "--ready"]),
+        svec(&["pr", "update", "42", "--add-required-reviewer", " "]),
+        svec(&[
+            "pr",
+            "update",
+            "42",
+            "--add-reviewer",
+            "Nick@Example.test",
+            "--add-required-reviewer",
+            "nick@example.test",
+        ]),
     ] {
         assert!(cli::parse(&args).is_err());
     }

@@ -212,6 +212,26 @@ impl<T: HttpTransport> AdoClient<T> {
         )
     }
 
+    /// Adds the reviewer as required, or marks an existing reviewer required, keeping any vote they have cast.
+    pub fn require_pull_request_reviewer(
+        &self,
+        project: &str,
+        repository: &str,
+        id: i64,
+        reviewer: &str,
+    ) -> Result<(String, i32)> {
+        self.validate_resource(project, repository, id)?;
+        if reviewer.trim().is_empty() {
+            return Err(Error("Reviewer identity must not be empty.".into()));
+        }
+        let reviewer_id = self.identity_id(reviewer)?;
+        // A fresh read right before the PUT keeps the window for a concurrent vote small.
+        let pull_request = self.pull_request(id)?;
+        let vote = current_reviewer_vote(&pull_request, &reviewer_id);
+        self.set_pull_request_vote(project, repository, id, &reviewer_id, vote, Some(true))?;
+        Ok((reviewer_id, vote))
+    }
+
     pub fn set_pull_request_vote(
         &self,
         project: &str,
@@ -350,6 +370,24 @@ fn pull_request_matches(
                     .any(|identity| identity_matches(identity, expected))
             })
     })
+}
+
+fn current_reviewer_vote(pull_request: &Value, reviewer_id: &str) -> i32 {
+    pull_request
+        .get("reviewers")
+        .and_then(Value::as_array)
+        .and_then(|reviewers| {
+            reviewers.iter().find(|reviewer| {
+                reviewer
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| id.eq_ignore_ascii_case(reviewer_id))
+            })
+        })
+        .and_then(|reviewer| reviewer.get("vote"))
+        .and_then(Value::as_i64)
+        .map(|vote| vote as i32)
+        .unwrap_or(0)
 }
 
 fn identity_matches(identity: &Value, expected: &str) -> bool {

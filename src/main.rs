@@ -41,7 +41,7 @@ const HELP: &str = "Usage:
       [--tags TAGS] [--profile NAME]
   ado pr update [TARGET] [--title TEXT] [--description-file PATH]
       [--status active|abandoned] [--draft | --ready] [--add-reviewer USER]...
-      [--tags TAGS] [--target BRANCH] [--profile NAME]
+      [--add-required-reviewer USER]... [--tags TAGS] [--target BRANCH] [--profile NAME]
   ado pr complete [TARGET] [--merge-strategy no-fast-forward|squash|rebase|rebase-merge]
       [--delete-source-branch] [--profile NAME]
   ado pr open TARGET [--profile NAME]

@@ -863,6 +863,116 @@ fn reviewer_lookup_rejects_missing_or_ambiguous_identities() {
 }
 
 #[test]
+fn require_pull_request_reviewer_keeps_existing_vote_and_matches_id_case_insensitively() {
+    let m = Mock::new(|r, index| match index {
+        0 => {
+            assert_eq!(r.method, "GET");
+            assert_eq!(r.url.host_str(), Some("vssps.dev.azure.com"));
+            assert_eq!(r.url.path(), "/acme/_apis/identities");
+            assert_eq!(query(r)["filterValue"], "ada@example.test");
+            Ok(response(
+                r,
+                200,
+                &json!({"value": [{"id": REVIEWER_ID}]}),
+                &[],
+            ))
+        }
+        1 => {
+            assert_eq!(r.method, "GET");
+            assert_eq!(r.url.host_str(), Some("dev.azure.com"));
+            assert_eq!(r.url.path(), "/acme/_apis/git/pullrequests/42");
+            Ok(response(
+                r,
+                200,
+                &json!({
+                    "pullRequestId": 42,
+                    "reviewers": [{"id": REVIEWER_ID.to_ascii_uppercase(), "vote": 5}],
+                }),
+                &[],
+            ))
+        }
+        2 => {
+            assert_eq!(r.method, "PUT");
+            assert_eq!(r.url.host_str(), Some("dev.azure.com"));
+            assert_eq!(
+                r.url.path(),
+                format!(
+                    "/acme/Project/_apis/git/repositories/Repo/pullrequests/42/reviewers/{REVIEWER_ID}"
+                )
+            );
+            let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+            assert_eq!(body, json!({"vote": 5, "isRequired": true}));
+            Ok(response(
+                r,
+                200,
+                &json!({"id": REVIEWER_ID, "vote": 5, "isRequired": true}),
+                &[],
+            ))
+        }
+        _ => panic!("unexpected request"),
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert_eq!(
+        c.require_pull_request_reviewer("Project", "Repo", 42, "ada@example.test")
+            .unwrap(),
+        (REVIEWER_ID.to_string(), 5)
+    );
+    assert_eq!(c.transport.count(), 3);
+}
+
+#[test]
+fn require_pull_request_reviewer_defaults_vote_to_zero_for_new_reviewer_guid() {
+    let m = Mock::new(|r, index| match index {
+        0 => {
+            assert_eq!(r.method, "GET");
+            assert_eq!(r.url.path(), "/acme/_apis/git/pullrequests/42");
+            Ok(response(
+                r,
+                200,
+                &json!({"pullRequestId": 42, "reviewers": []}),
+                &[],
+            ))
+        }
+        1 => {
+            assert_eq!(r.method, "PUT");
+            assert_eq!(
+                r.url.path(),
+                format!(
+                    "/acme/Project/_apis/git/repositories/Repo/pullrequests/42/reviewers/{REVIEWER_ID}"
+                )
+            );
+            let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+            assert_eq!(body, json!({"vote": 0, "isRequired": true}));
+            Ok(response(
+                r,
+                200,
+                &json!({"id": REVIEWER_ID, "vote": 0, "isRequired": true}),
+                &[],
+            ))
+        }
+        _ => panic!("unexpected request"),
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert_eq!(
+        c.require_pull_request_reviewer("Project", "Repo", 42, &REVIEWER_ID.to_ascii_uppercase())
+            .unwrap(),
+        (REVIEWER_ID.to_string(), 0)
+    );
+    assert_eq!(c.transport.count(), 2);
+}
+
+#[test]
+fn require_pull_request_reviewer_rejects_empty_reviewer_without_sending() {
+    let m = Mock::new(|r, _| panic!("unexpected request to {}", r.url));
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert!(
+        c.require_pull_request_reviewer("Project", "Repo", 42, "  ")
+            .is_err()
+    );
+    assert_eq!(c.transport.count(), 0);
+}
+
+#[test]
 fn update_pull_request_sends_completion_and_retarget_bodies() {
     let m = Mock::new(|r, index| {
         assert_eq!(r.method, "PATCH");

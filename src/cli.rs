@@ -58,6 +58,7 @@ pub enum CliCommand {
         status: Option<String>,
         draft: Option<bool>,
         add_reviewers: Vec<String>,
+        add_required_reviewers: Vec<String>,
         tags: Option<String>,
         target_branch: Option<String>,
         profile: Option<String>,
@@ -605,7 +606,7 @@ fn parse_pr_update(args: &[String]) -> Result<CliCommand> {
             "--target",
             "--profile",
         ],
-        &["--add-reviewer"],
+        &["--add-reviewer", "--add-required-reviewer"],
         &["--draft", "--ready"],
     )?;
     if values.flags.contains("--draft") && values.flags.contains("--ready") {
@@ -637,6 +638,23 @@ fn parse_pr_update(args: &[String]) -> Result<CliCommand> {
     {
         return Err(Error("--add-reviewer must not be empty.".into()));
     }
+    let add_required_reviewers = values.repeated("--add-required-reviewer");
+    if add_required_reviewers
+        .iter()
+        .any(|reviewer| reviewer.trim().is_empty())
+    {
+        return Err(Error("--add-required-reviewer must not be empty.".into()));
+    }
+    if add_reviewers.iter().any(|reviewer| {
+        add_required_reviewers
+            .iter()
+            .any(|required| required.trim().eq_ignore_ascii_case(reviewer.trim()))
+    }) {
+        return Err(Error(
+            "A reviewer may not be passed to both --add-reviewer and --add-required-reviewer."
+                .into(),
+        ));
+    }
     let tags = values.take("--tags");
     let target_branch = values.take("--target");
     if target_branch
@@ -650,6 +668,7 @@ fn parse_pr_update(args: &[String]) -> Result<CliCommand> {
         && status.is_none()
         && draft.is_none()
         && add_reviewers.is_empty()
+        && add_required_reviewers.is_empty()
         && tags.is_none()
         && target_branch.is_none()
     {
@@ -664,6 +683,7 @@ fn parse_pr_update(args: &[String]) -> Result<CliCommand> {
         status,
         draft,
         add_reviewers,
+        add_required_reviewers,
         tags,
         target_branch,
         profile: values.take("--profile"),

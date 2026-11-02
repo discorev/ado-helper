@@ -164,6 +164,7 @@ impl Application {
         status: Option<&str>,
         draft: Option<bool>,
         add_reviewers: &[String],
+        add_required_reviewers: &[String],
         tags: Option<&str>,
         target_branch: Option<&str>,
         profile_name: Option<&str>,
@@ -220,6 +221,16 @@ impl Application {
                 reviewer,
             )?;
         }
+        let mut required_reviewers = Vec::new();
+        for reviewer in add_required_reviewers {
+            let (reviewer_id, vote) = resolved.client.require_pull_request_reviewer(
+                &repository.project,
+                &repository.repository,
+                resolved.locator.id,
+                reviewer,
+            )?;
+            required_reviewers.push((reviewer.clone(), reviewer_id, vote));
+        }
         if let Some(tags) = tags {
             replace_labels(
                 &resolved.client,
@@ -229,6 +240,7 @@ impl Application {
             )?;
         }
         let updated = resolved.client.pull_request(resolved.locator.id)?;
+        validate_required_reviewers(&updated, &required_reviewers)?;
         write_json(&show_pull_request(
             &updated,
             &resolved.locator.organization,
@@ -340,6 +352,38 @@ fn replace_labels(
                 id,
                 label,
             )?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_required_reviewers(
+    pull_request: &Value,
+    expected: &[(String, String, i32)],
+) -> Result<()> {
+    let id = pull_request_id(pull_request)?;
+    let reviewers = pull_request.get("reviewers").and_then(Value::as_array);
+    for (user, reviewer_id, vote) in expected {
+        let reviewer = reviewers.and_then(|reviewers| {
+            reviewers.iter().find(|reviewer| {
+                reviewer
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|actual| actual.eq_ignore_ascii_case(reviewer_id))
+            })
+        });
+        let Some(reviewer) = reviewer
+            .filter(|reviewer| reviewer.get("isRequired").and_then(Value::as_bool) == Some(true))
+        else {
+            return Err(Error(format!(
+                "Pull request {id} was updated, but reviewer '{user}' is not shown as required in the readback."
+            )));
+        };
+        let actual = reviewer.get("vote").and_then(Value::as_i64).unwrap_or(0) as i32;
+        if actual != *vote {
+            return Err(Error(format!(
+                "Pull request {id} was updated, but reviewer '{user}' now shows vote {actual} instead of {vote}; check it with 'ado pr show'."
+            )));
         }
     }
     Ok(())

@@ -1063,7 +1063,9 @@ fn validate_thread(v: &Value, id: i64, path: &str, line: i64, end: i64, side: &s
 
 #[cfg(test)]
 mod tests {
-    use super::management::{parse_labels, pull_request_url, validate_source_tip};
+    use super::management::{
+        parse_labels, pull_request_url, validate_required_reviewers, validate_source_tip,
+    };
     use super::*;
 
     #[test]
@@ -1333,5 +1335,38 @@ mod tests {
         assert_eq!(reviewer_is_required(&pull_request, "ada"), Some(false));
         assert_eq!(reviewer_is_required(&pull_request, "grace"), None);
         assert_eq!(reviewer_is_required(&json!({}), "ollie"), None);
+    }
+
+    #[test]
+    fn validate_required_reviewers_checks_presence_required_flag_and_vote() {
+        let pull_request = json!({
+            "pullRequestId": 42,
+            "reviewers": [
+                {"id": "OLLIE", "isRequired": true, "vote": 5},
+                {"id": "ada", "vote": 0},
+            ]
+        });
+        assert!(
+            validate_required_reviewers(&pull_request, &[("ollie".into(), "ollie".into(), 5)])
+                .is_ok()
+        );
+        assert_eq!(
+            validate_required_reviewers(&pull_request, &[("grace".into(), "grace".into(), 0)])
+                .unwrap_err()
+                .to_string(),
+            "Pull request 42 was updated, but reviewer 'grace' is not shown as required in the readback."
+        );
+        assert_eq!(
+            validate_required_reviewers(&pull_request, &[("ada".into(), "ada".into(), 0)])
+                .unwrap_err()
+                .to_string(),
+            "Pull request 42 was updated, but reviewer 'ada' is not shown as required in the readback."
+        );
+        assert_eq!(
+            validate_required_reviewers(&pull_request, &[("ollie".into(), "ollie".into(), 10)])
+                .unwrap_err()
+                .to_string(),
+            "Pull request 42 was updated, but reviewer 'ollie' now shows vote 5 instead of 10; check it with 'ado pr show'."
+        );
     }
 }

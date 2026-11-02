@@ -54,6 +54,7 @@ ado pr show 123 --profile work
 ado pr create --title "Add search" --reviewer ada@example.com --work-item 456 \
   --tags "api,ready"
 ado pr update 123 --ready --add-reviewer grace@example.com --tags "api,approved"
+ado pr update 123 --add-required-reviewer nick@example.com
 ado pr open 123
 ado pr threads https://dev.azure.com/ORG/PROJECT/_git/REPO/pullrequest/123
 ado pr vote 123 --vote approve
@@ -70,6 +71,8 @@ ado pr diff 123 --directory ~/Developer/ado-reviews/custom
 `pr create` derives the organisation, project and repository from the current Azure Git remote. The source defaults to the current branch and the target defaults to the repository's default branch. The source must already exist on the remote, and when it is the current branch its remote tip must equal local `HEAD`; `ado` never pushes. Repeat `--reviewer` and `--work-item` to add more than one. `--tags` is a comma-separated PR-label list.
 
 `pr update` accepts the same URL, number or current-branch target resolution as other PR commands and requires at least one field option. Use `--draft` or `--ready` to change draft state, `--status active|abandoned` to change status, and repeat `--add-reviewer` as needed. Reviewers accept an email, unique name or identity GUID; anything other than a GUID is resolved through the organisation's identity service and must match exactly one identity. Supplying `--tags` replaces the complete PR-label set; use an empty value to clear it. `--target BRANCH` retargets the PR (for example after the PR it was stacked on has merged). It reads the current target first and does nothing if the PR already targets that branch, because Azure DevOps returns 400 for a same-target retarget. After a retarget it sends `mergeStatus: queued` to make Azure DevOps recompute the preview merge against the new target; check `mergeStatus` with `ado pr show` before completing.
+
+Repeat `--add-required-reviewer` to add a reviewer as required, or to switch an existing optional reviewer to required; it accepts the same identity forms as `--add-reviewer`. It sends the reviewer's current vote back unchanged, so it never resets a vote already cast, and re-reads the PR afterwards to confirm `isRequired: true` and the unchanged vote. A reviewer may not be passed to both `--add-reviewer` and `--add-required-reviewer`.
 
 `pr complete` completes the PR using `--merge-strategy no-fast-forward|squash|rebase|rebase-merge` (default `no-fast-forward`). It keeps the source branch unless `--delete-source-branch` is given. It refuses a draft PR, a PR that is not active, and a PR whose `mergeStatus` is not `succeeded`. It pins the merge to the PR's current source commit (`lastMergeSourceCommit`), so a push after you looked is rejected rather than merged. Azure DevOps may finish the merge asynchronously; confirm with `ado pr show`.
 

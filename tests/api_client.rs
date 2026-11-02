@@ -353,6 +353,25 @@ fn top_level_comment_failure_is_not_retried_or_leaked() {
 }
 
 #[test]
+fn http_error_includes_trimmed_and_capped_azure_devops_message() {
+    let m = Mock::new(|r, index| {
+        let message = if index == 0 {
+            "  The chosen merge type is forbidden by policy.  ".to_owned()
+        } else {
+            "x".repeat(500)
+        };
+        Ok(response(r, 403, &json!({"message": message}), &[]))
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert_eq!(
+        c.pull_request(42).unwrap_err().to_string(),
+        "Azure DevOps denied access (HTTP 403). Check the profile's PAT scopes and account permissions for this repository. Azure DevOps said: The chosen merge type is forbidden by policy."
+    );
+    let capped = c.pull_request(42).unwrap_err().to_string();
+    assert!(capped.ends_with(&format!("Azure DevOps said: {}", "x".repeat(400))));
+}
+
+#[test]
 fn comment_edit_patches_only_content_at_exact_comment() {
     let m = Mock::new(|r, _| {
         assert_eq!(r.method, "PATCH");

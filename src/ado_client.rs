@@ -743,10 +743,19 @@ impl<T: HttpTransport> AdoClient<T> {
         }
         if !(200..300).contains(&res.status) {
             let path = percent_encoding::percent_decode_str(req.url.path()).decode_utf8_lossy();
-            return Err(Error(match res.status{401=>"Azure DevOps rejected authentication (HTTP 401). Renew the affected profile with 'ado auth update NAME'.".into(),403=>"Azure DevOps denied access (HTTP 403). Check the profile's PAT scopes and account permissions for this repository.".into(),s=>format!("Azure DevOps returned HTTP {s} for {} {path}.",req.method)}));
+            let base: String = match res.status{401=>"Azure DevOps rejected authentication (HTTP 401). Renew the affected profile with 'ado auth update NAME'.".into(),403=>"Azure DevOps denied access (HTTP 403). Check the profile's PAT scopes and account permissions for this repository.".into(),s=>format!("Azure DevOps returned HTTP {s} for {} {path}.",req.method)};
+            return Err(Error(match server_message(&res.body) {
+                Some(message) => format!("{base} Azure DevOps said: {message}"),
+                None => base,
+            }));
         }
         Ok(res)
     }
+}
+fn server_message(body: &[u8]) -> Option<String> {
+    let value: Value = serde_json::from_slice(body).ok()?;
+    let message = value.get("message")?.as_str()?.trim();
+    (!message.is_empty()).then(|| message.chars().take(400).collect())
 }
 fn is_guid(value: &str) -> bool {
     let groups: Vec<&str> = value.split('-').collect();

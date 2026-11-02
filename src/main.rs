@@ -37,10 +37,10 @@ const HELP: &str = "Usage:
       [--reviewer me|USER] [--source BRANCH] [--target BRANCH] [--top N] [--profile NAME]
   ado pr show [TARGET] [--profile NAME]
   ado pr create [--source BRANCH] [--target BRANCH] --title TEXT
-      [--description-file PATH] [--draft] [--reviewer USER]... [--work-item ID]...
+      [--description-file PATH] [--draft] [--reviewer USER]... [--force] [--work-item ID]...
       [--tags TAGS] [--profile NAME]
   ado pr update [TARGET] [--title TEXT] [--description-file PATH]
-      [--status active|abandoned] [--draft | --ready] [--add-reviewer USER]...
+      [--status active|abandoned] [--draft | --ready] [--add-reviewer USER]... [--force]
       [--add-required-reviewer USER]... [--tags TAGS] [--target BRANCH] [--profile NAME]
   ado pr complete [TARGET] [--merge-strategy no-fast-forward|squash|rebase|rebase-merge]
       [--delete-source-branch] [--profile NAME]

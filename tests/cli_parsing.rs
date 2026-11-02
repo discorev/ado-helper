@@ -621,6 +621,7 @@ fn parses_pr_create_with_repeatable_reviewers_and_work_items() {
             description_file: Some("/tmp/description".into()),
             draft: true,
             reviewers: vec!["ada@example.test".into(), "grace@example.test".into()],
+            force: false,
             work_items: vec![12, 13],
             tags: Some("api,urgent".into()),
             profile: Some("work".into()),
@@ -638,6 +639,49 @@ fn parses_pr_create_with_repeatable_reviewers_and_work_items() {
         ]))
         .is_err()
     );
+}
+
+#[test]
+fn parses_pr_create_force_and_rejects_it_without_a_reviewer() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "create",
+            "--title",
+            "Title",
+            "--reviewer",
+            "ada@example.test",
+            "--force",
+        ]))
+        .unwrap(),
+        CliCommand::PrCreate {
+            source: None,
+            target: None,
+            title: "Title".into(),
+            description_file: None,
+            draft: false,
+            reviewers: vec!["ada@example.test".into()],
+            force: true,
+            work_items: vec![],
+            tags: None,
+            profile: None,
+        }
+    );
+    for args in [
+        svec(&["pr", "create", "--title", "Title", "--force"]),
+        svec(&[
+            "pr",
+            "create",
+            "--title",
+            "Title",
+            "--reviewer",
+            "ada@example.test",
+            "--force",
+            "--force",
+        ]),
+    ] {
+        assert!(cli::parse(&args).is_err(), "{args:?}");
+    }
 }
 
 #[test]
@@ -676,6 +720,7 @@ fn parses_pr_update_and_requires_a_field() {
             draft: Some(false),
             add_reviewers: vec!["ada@example.test".into(), "grace@example.test".into()],
             add_required_reviewers: vec!["nick@example.test".into(), "olga@example.test".into()],
+            force: false,
             tags: Some("api,ready".into()),
             target_branch: None,
             profile: Some("work".into()),
@@ -691,6 +736,7 @@ fn parses_pr_update_and_requires_a_field() {
             draft: Some(true),
             add_reviewers: vec![],
             add_required_reviewers: vec![],
+            force: false,
             tags: None,
             target_branch: None,
             profile: None,
@@ -706,6 +752,7 @@ fn parses_pr_update_and_requires_a_field() {
             draft: None,
             add_reviewers: vec![],
             add_required_reviewers: vec![],
+            force: false,
             tags: None,
             target_branch: Some("main".into()),
             profile: None,
@@ -728,6 +775,7 @@ fn parses_pr_update_and_requires_a_field() {
             draft: None,
             add_reviewers: vec![],
             add_required_reviewers: vec!["nick@example.test".into()],
+            force: false,
             tags: None,
             target_branch: None,
             profile: None,
@@ -750,6 +798,56 @@ fn parses_pr_update_and_requires_a_field() {
         ]),
     ] {
         assert!(cli::parse(&args).is_err());
+    }
+}
+
+#[test]
+fn parses_pr_update_force_and_rejects_it_without_add_reviewer() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "update",
+            "42",
+            "--add-reviewer",
+            "ada@example.test",
+            "--force",
+        ]))
+        .unwrap(),
+        CliCommand::PrUpdate {
+            target: PullRequestTarget::Number(42),
+            title: None,
+            description_file: None,
+            status: None,
+            draft: None,
+            add_reviewers: vec!["ada@example.test".into()],
+            add_required_reviewers: vec![],
+            force: true,
+            tags: None,
+            target_branch: None,
+            profile: None,
+        }
+    );
+    for args in [
+        svec(&["pr", "update", "42", "--force"]),
+        svec(&[
+            "pr",
+            "update",
+            "42",
+            "--add-required-reviewer",
+            "nick@example.test",
+            "--force",
+        ]),
+        svec(&[
+            "pr",
+            "update",
+            "42",
+            "--add-reviewer",
+            "ada@example.test",
+            "--force",
+            "--force",
+        ]),
+    ] {
+        assert!(cli::parse(&args).is_err(), "{args:?}");
     }
 }
 

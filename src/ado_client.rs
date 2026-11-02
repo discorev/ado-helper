@@ -14,6 +14,8 @@ use url::Url;
 mod pull_requests;
 mod work_items;
 
+pub use pull_requests::reviewer_entry;
+
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
     pub method: String,

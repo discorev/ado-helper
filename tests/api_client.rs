@@ -753,6 +753,17 @@ fn pull_request_create_update_and_related_mutations_build_expected_requests() {
             ))
         }
         3 => {
+            assert_eq!(r.method, "GET");
+            assert_eq!(r.url.host_str(), Some("dev.azure.com"));
+            assert_eq!(r.url.path(), "/acme/_apis/git/pullrequests/42");
+            Ok(response(
+                r,
+                200,
+                &json!({"pullRequestId": 42, "reviewers": []}),
+                &[],
+            ))
+        }
+        4 => {
             assert_eq!(r.method, "PUT");
             assert_eq!(r.url.host_str(), Some("dev.azure.com"));
             assert_eq!(
@@ -770,14 +781,14 @@ fn pull_request_create_update_and_related_mutations_build_expected_requests() {
                 &[],
             ))
         }
-        4 => {
+        5 => {
             assert_eq!(r.method, "POST");
             assert!(r.url.path().ends_with("/pullrequests/42/labels"));
             let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
             assert_eq!(body, json!({"name": "urgent"}));
             Ok(response(r, 200, &json!({"id": "label-id"}), &[]))
         }
-        5 => {
+        6 => {
             assert_eq!(r.method, "DELETE");
             assert!(r.url.path().ends_with("/pullrequests/42/labels/label-id"));
             assert!(r.body.is_none());
@@ -804,13 +815,13 @@ fn pull_request_create_update_and_related_mutations_build_expected_requests() {
         &json!({"isDraft": false, "status": "active"}),
     )
     .unwrap();
-    c.add_pull_request_reviewer("Project", "Repo", 42, "ada@example.test")
+    c.add_pull_request_reviewer("Project", "Repo", 42, "ada@example.test", false)
         .unwrap();
     c.add_pull_request_label("Project", "Repo", 42, "urgent")
         .unwrap();
     c.delete_pull_request_label("Project", "Repo", 42, "label-id")
         .unwrap();
-    assert_eq!(c.transport.count(), 6);
+    assert_eq!(c.transport.count(), 7);
 }
 
 const REVIEWER_ID: &str = "c272bad6-876b-6b0b-9869-2b60aa5a36f9";
@@ -827,8 +838,14 @@ fn reviewer_guid_skips_identity_lookup() {
         Ok(response(r, 200, &json!({"id": REVIEWER_ID}), &[]))
     });
     let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
-    c.add_pull_request_reviewer("Project", "Repo", 42, &REVIEWER_ID.to_ascii_uppercase())
-        .unwrap();
+    c.add_pull_request_reviewer(
+        "Project",
+        "Repo",
+        42,
+        &REVIEWER_ID.to_ascii_uppercase(),
+        true,
+    )
+    .unwrap();
     assert_eq!(c.transport.count(), 1);
 }
 
@@ -853,13 +870,124 @@ fn reviewer_lookup_rejects_missing_or_ambiguous_identities() {
         });
         let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
         assert_eq!(
-            c.add_pull_request_reviewer("Project", "Repo", 42, "ada")
+            c.add_pull_request_reviewer("Project", "Repo", 42, "ada", true)
                 .unwrap_err()
                 .0,
             expected
         );
         assert_eq!(c.transport.count(), 1);
     }
+}
+
+#[test]
+fn add_pull_request_reviewer_skips_an_existing_reviewer_by_default() {
+    let m = Mock::new(|r, index| match index {
+        0 => {
+            assert_eq!(r.method, "GET");
+            assert_eq!(r.url.host_str(), Some("vssps.dev.azure.com"));
+            assert_eq!(r.url.path(), "/acme/_apis/identities");
+            assert_eq!(query(r)["filterValue"], "ada@example.test");
+            Ok(response(
+                r,
+                200,
+                &json!({"value": [{"id": REVIEWER_ID}]}),
+                &[],
+            ))
+        }
+        1 => {
+            assert_eq!(r.method, "GET");
+            assert_eq!(r.url.host_str(), Some("dev.azure.com"));
+            assert_eq!(r.url.path(), "/acme/_apis/git/pullrequests/42");
+            Ok(response(
+                r,
+                200,
+                &json!({
+                    "pullRequestId": 42,
+                    "reviewers": [{"id": REVIEWER_ID.to_ascii_uppercase()}],
+                }),
+                &[],
+            ))
+        }
+        _ => panic!("unexpected request"),
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert_eq!(
+        c.add_pull_request_reviewer("Project", "Repo", 42, "ada@example.test", false)
+            .unwrap(),
+        REVIEWER_ID
+    );
+    assert_eq!(c.transport.count(), 2);
+}
+
+#[test]
+fn add_pull_request_reviewer_adds_a_new_reviewer_by_default() {
+    let m = Mock::new(|r, index| match index {
+        0 => {
+            assert_eq!(r.method, "GET");
+            assert_eq!(r.url.path(), "/acme/_apis/git/pullrequests/42");
+            Ok(response(
+                r,
+                200,
+                &json!({"pullRequestId": 42, "reviewers": []}),
+                &[],
+            ))
+        }
+        1 => {
+            assert_eq!(r.method, "PUT");
+            assert_eq!(
+                r.url.path(),
+                format!(
+                    "/acme/Project/_apis/git/repositories/Repo/pullrequests/42/reviewers/{REVIEWER_ID}"
+                )
+            );
+            let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+            assert_eq!(body, json!({"vote": 0}));
+            Ok(response(r, 200, &json!({"id": REVIEWER_ID}), &[]))
+        }
+        _ => panic!("unexpected request"),
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert_eq!(
+        c.add_pull_request_reviewer(
+            "Project",
+            "Repo",
+            42,
+            &REVIEWER_ID.to_ascii_uppercase(),
+            false
+        )
+        .unwrap(),
+        REVIEWER_ID
+    );
+    assert_eq!(c.transport.count(), 2);
+}
+
+#[test]
+fn add_pull_request_reviewer_forces_an_existing_reviewer_without_reading_the_pull_request() {
+    let m = Mock::new(|r, _| {
+        assert_eq!(r.method, "PUT");
+        assert_eq!(
+            r.url.path(),
+            format!(
+                "/acme/Project/_apis/git/repositories/Repo/pullrequests/42/reviewers/{REVIEWER_ID}"
+            )
+        );
+        let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+        assert_eq!(body, json!({"vote": 0}));
+        Ok(response(r, 200, &json!({"id": REVIEWER_ID}), &[]))
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert_eq!(
+        c.add_pull_request_reviewer(
+            "Project",
+            "Repo",
+            42,
+            &REVIEWER_ID.to_ascii_uppercase(),
+            true
+        )
+        .unwrap(),
+        REVIEWER_ID
+    );
+    assert_eq!(c.transport.count(), 1);
 }
 
 #[test]

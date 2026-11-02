@@ -183,18 +183,26 @@ impl<T: HttpTransport> AdoClient<T> {
         )
     }
 
+    /// Adds the reviewer as optional with vote 0, unless they are already a reviewer and `force` is false, in which case they are left unchanged.
     pub fn add_pull_request_reviewer(
         &self,
         project: &str,
         repository: &str,
         id: i64,
         reviewer: &str,
-    ) -> Result<Value> {
+        force: bool,
+    ) -> Result<String> {
         self.validate_resource(project, repository, id)?;
         if reviewer.trim().is_empty() {
             return Err(Error("Reviewer identity must not be empty.".into()));
         }
         let reviewer_id = self.identity_id(reviewer)?;
+        if !force {
+            let pull_request = self.pull_request(id)?;
+            if reviewer_entry(&pull_request, &reviewer_id).is_some() {
+                return Ok(reviewer_id);
+            }
+        }
         self.send_object(
             "PUT",
             &[
@@ -209,7 +217,8 @@ impl<T: HttpTransport> AdoClient<T> {
                 &reviewer_id,
             ],
             &json!({"vote": 0}),
-        )
+        )?;
+        Ok(reviewer_id)
     }
 
     /// Adds the reviewer as required, or marks an existing reviewer required, keeping any vote they have cast.
@@ -372,18 +381,21 @@ fn pull_request_matches(
     })
 }
 
-fn current_reviewer_vote(pull_request: &Value, reviewer_id: &str) -> i32 {
+pub fn reviewer_entry<'a>(pull_request: &'a Value, reviewer_id: &str) -> Option<&'a Value> {
     pull_request
         .get("reviewers")
-        .and_then(Value::as_array)
-        .and_then(|reviewers| {
-            reviewers.iter().find(|reviewer| {
-                reviewer
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|id| id.eq_ignore_ascii_case(reviewer_id))
-            })
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|reviewer| {
+            reviewer
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| id.eq_ignore_ascii_case(reviewer_id))
         })
+}
+
+fn current_reviewer_vote(pull_request: &Value, reviewer_id: &str) -> i32 {
+    reviewer_entry(pull_request, reviewer_id)
         .and_then(|reviewer| reviewer.get("vote"))
         .and_then(Value::as_i64)
         .map(|vote| vote as i32)

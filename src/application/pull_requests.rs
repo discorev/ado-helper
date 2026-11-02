@@ -1064,7 +1064,8 @@ fn validate_thread(v: &Value, id: i64, path: &str, line: i64, end: i64, side: &s
 #[cfg(test)]
 mod tests {
     use super::management::{
-        parse_labels, pull_request_url, validate_required_reviewers, validate_source_tip,
+        parse_labels, pull_request_url, validate_required_reviewers, validate_reviewers_present,
+        validate_source_tip,
     };
     use super::*;
 
@@ -1367,6 +1368,42 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "Pull request 42 was updated, but reviewer 'ollie' now shows vote 5 instead of 10; check it with 'ado pr show'."
+        );
+    }
+
+    #[test]
+    fn validate_reviewers_present_matches_case_insensitively_and_reports_missing() {
+        let pull_request = json!({
+            "pullRequestId": 42,
+            "reviewers": [{"id": "OLLIE"}],
+        });
+        assert!(
+            validate_reviewers_present(
+                &pull_request,
+                &[("ollie".into(), "ollie".into())],
+                "updated"
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            validate_reviewers_present(
+                &pull_request,
+                &[("grace".into(), "grace".into())],
+                "updated"
+            )
+            .unwrap_err()
+            .to_string(),
+            "Pull request 42 was updated, but reviewer 'grace' is missing from the readback."
+        );
+        assert_eq!(
+            validate_reviewers_present(
+                &pull_request,
+                &[("grace".into(), "grace".into())],
+                "created"
+            )
+            .unwrap_err()
+            .to_string(),
+            "Pull request 42 was created, but reviewer 'grace' is missing from the readback."
         );
     }
 }

@@ -47,6 +47,7 @@ pub enum CliCommand {
         description_file: Option<String>,
         draft: bool,
         reviewers: Vec<String>,
+        force: bool,
         work_items: Vec<i64>,
         tags: Option<String>,
         profile: Option<String>,
@@ -59,6 +60,7 @@ pub enum CliCommand {
         draft: Option<bool>,
         add_reviewers: Vec<String>,
         add_required_reviewers: Vec<String>,
+        force: bool,
         tags: Option<String>,
         target_branch: Option<String>,
         profile: Option<String>,
@@ -560,7 +562,7 @@ fn parse_pr_create(args: &[String]) -> Result<CliCommand> {
             "--profile",
         ],
         &["--reviewer", "--work-item"],
-        &["--draft"],
+        &["--draft", "--force"],
     )?;
     if values.positional.is_some() {
         return Err(Error(
@@ -570,6 +572,10 @@ fn parse_pr_create(args: &[String]) -> Result<CliCommand> {
     let reviewers = values.repeated("--reviewer");
     if reviewers.iter().any(|reviewer| reviewer.trim().is_empty()) {
         return Err(Error("--reviewer must not be empty.".into()));
+    }
+    let force = values.flags.contains("--force");
+    if force && reviewers.is_empty() {
+        return Err(Error("--force requires --reviewer.".into()));
     }
     let work_items = values
         .repeated("--work-item")
@@ -589,6 +595,7 @@ fn parse_pr_create(args: &[String]) -> Result<CliCommand> {
         description_file: values.take("--description-file"),
         draft: values.flags.contains("--draft"),
         reviewers,
+        force,
         work_items,
         tags: values.take("--tags"),
         profile: values.take("--profile"),
@@ -607,7 +614,7 @@ fn parse_pr_update(args: &[String]) -> Result<CliCommand> {
             "--profile",
         ],
         &["--add-reviewer", "--add-required-reviewer"],
-        &["--draft", "--ready"],
+        &["--draft", "--ready", "--force"],
     )?;
     if values.flags.contains("--draft") && values.flags.contains("--ready") {
         return Err(Error(
@@ -637,6 +644,10 @@ fn parse_pr_update(args: &[String]) -> Result<CliCommand> {
         .any(|reviewer| reviewer.trim().is_empty())
     {
         return Err(Error("--add-reviewer must not be empty.".into()));
+    }
+    let force = values.flags.contains("--force");
+    if force && add_reviewers.is_empty() {
+        return Err(Error("--force requires --add-reviewer.".into()));
     }
     let add_required_reviewers = values.repeated("--add-required-reviewer");
     if add_required_reviewers
@@ -684,6 +695,7 @@ fn parse_pr_update(args: &[String]) -> Result<CliCommand> {
         draft,
         add_reviewers,
         add_required_reviewers,
+        force,
         tags,
         target_branch,
         profile: values.take("--profile"),

@@ -1363,6 +1363,7 @@ fn policy_evaluations_builds_artifact_id_and_uses_preview_version() {
             q["artifactId"],
             format!("vstfs:///CodeReview/CodeReviewId/{project}/42")
         );
+        assert_eq!(q["includeNotApplicable"], "true");
         assert_eq!(q["api-version"], "7.1-preview.1");
         Ok(response(
             r,

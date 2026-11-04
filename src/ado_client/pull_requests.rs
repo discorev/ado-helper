@@ -411,7 +411,10 @@ impl<T: HttpTransport> AdoClient<T> {
         let object = self
             .get_object_response_version(
                 &[project_id, "_apis", "policy", "evaluations"],
-                &[("artifactId", artifact_id.as_str())],
+                &[
+                    ("artifactId", artifact_id.as_str()),
+                    ("includeNotApplicable", "true"),
+                ],
                 Some("7.1-preview.1"),
             )?
             .0;

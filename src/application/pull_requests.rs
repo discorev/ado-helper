@@ -115,8 +115,25 @@ impl Application {
         let repo = repository_identity(&r.pull_request)?;
         let body = completion_body(&r.pull_request, merge_strategy, delete_source_branch)?;
         let updated =
-            r.client
-                .update_pull_request(&repo.project, &repo.repository, r.locator.id, &body)?;
+            match r
+                .client
+                .update_pull_request(&repo.project, &repo.repository, r.locator.id, &body)
+            {
+                Ok(value) => value,
+                Err(error) => {
+                    // The PATCH may have failed because a blocking policy has not passed yet; look
+                    // that up as a best-effort addition to the error rather than letting it mask the
+                    // original failure.
+                    let evaluations = checks::project_id(&r.pull_request).and_then(|project_id| {
+                        r.client.policy_evaluations(&project_id, r.locator.id)
+                    });
+                    return Err(checks::completion_error_with_policies(
+                        error,
+                        evaluations,
+                        r.locator.id,
+                    ));
+                }
+            };
         write_json(&updated)
     }
 

@@ -358,6 +358,34 @@ impl<T: HttpTransport> AdoClient<T> {
             Some("7.1"),
         )
     }
+
+    /// Lists branch-policy evaluations for the pull request's code review artifact. The policy
+    /// evaluations API is preview-only, so this pins `7.1-preview.1` instead of the usual `7.1`.
+    pub fn policy_evaluations(&self, project_id: &str, pull_request_id: i64) -> Result<Vec<Value>> {
+        if project_id.is_empty() {
+            return Err(Error("Project must not be empty.".into()));
+        }
+        if pull_request_id <= 0 {
+            return Err(Error("Pull request ID must be greater than zero.".into()));
+        }
+        let artifact_id =
+            format!("vstfs:///CodeReview/CodeReviewId/{project_id}/{pull_request_id}");
+        let object = self
+            .get_object_response_version(
+                &[project_id, "_apis", "policy", "evaluations"],
+                &[
+                    ("artifactId", artifact_id.as_str()),
+                    ("includeNotApplicable", "true"),
+                ],
+                Some("7.1-preview.1"),
+            )?
+            .0;
+        object
+            .get("value")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or_else(invalid_response)
+    }
 }
 
 fn pull_request_matches(

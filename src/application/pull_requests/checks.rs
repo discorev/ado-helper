@@ -1,6 +1,9 @@
 use super::*;
 use ado_core::platform::terminal_safe;
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 impl Application {
     pub(crate) fn pr_checks(
@@ -69,8 +72,10 @@ impl Application {
 /// Polls `fetch` for policy evaluations until the overall state is no longer `pending`, sleeping
 /// between polls via `sleep` and tracking elapsed time via `elapsed` so tests can avoid real
 /// time. Calls `notify` with one line per check whose status changed since the previous poll
-/// (including the first poll). Never sleeps past `timeout`; if a poll after the final sleep is
-/// still pending, the state is reported as `timedOut`.
+/// (including the first poll). A failed poll after the first is reported and retried, up to
+/// `MAX_POLL_FAILURES` in a row, so a network blip does not end a long background wait. Never
+/// sleeps past `timeout`; if a poll after the final sleep is still pending, the state is
+/// reported as `timedOut`.
 pub(super) fn wait_for_checks(
     mut fetch: impl FnMut() -> Result<Vec<Value>>,
     mut sleep: impl FnMut(Duration),
@@ -79,20 +84,16 @@ pub(super) fn wait_for_checks(
     interval: Duration,
     mut notify: impl FnMut(&str),
 ) -> Result<(String, Vec<Value>)> {
-    let mut previous: Vec<(String, String)> = Vec::new();
+    let mut evaluations = fetch()?;
+    let mut previous = HashMap::new();
+    let mut failures = 0;
     loop {
-        let evaluations = fetch()?;
-        let current = evaluation_statuses(&evaluations);
-        for (index, (name, status)) in current.iter().enumerate() {
-            if previous
-                .get(index)
-                .map(|(_, previous_status)| previous_status)
-                != Some(status)
-            {
+        for (key, name, status) in evaluation_statuses(&evaluations) {
+            if previous.get(&key) != Some(&status) {
                 notify(&format!("{name}: {status}"));
+                previous.insert(key, status);
             }
         }
-        previous = current;
         let state = overall_state(&evaluations);
         if state != "pending" {
             return Ok((state.to_string(), evaluations));
@@ -102,8 +103,23 @@ pub(super) fn wait_for_checks(
             return Ok(("timedOut".into(), evaluations));
         }
         sleep(interval.min(remaining));
+        match fetch() {
+            Ok(latest) => {
+                evaluations = latest;
+                failures = 0;
+            }
+            Err(error) => {
+                failures += 1;
+                if failures >= MAX_POLL_FAILURES {
+                    return Err(error);
+                }
+                notify(&format!("Polling failed; retrying: {error}"));
+            }
+        }
     }
 }
+
+const MAX_POLL_FAILURES: u32 = 3;
 
 fn exit_code(state: &str) -> i32 {
     match state {
@@ -196,18 +212,21 @@ fn overall_state(evaluations: &[Value]) -> &'static str {
     }
 }
 
-fn evaluation_statuses(evaluations: &[Value]) -> Vec<(String, String)> {
+/// Returns `(key, name, status)` per enabled evaluation, keyed by `evaluationId` so status
+/// changes are tracked per check even if Azure DevOps adds or reorders evaluations.
+fn evaluation_statuses(evaluations: &[Value]) -> Vec<(String, String, String)> {
     evaluations
         .iter()
         .filter(|evaluation| enabled(evaluation))
         .map(|evaluation| {
             let name = evaluation_name(evaluation).unwrap_or_else(|| "check".into());
+            let key = nonempty_str(evaluation, "/evaluationId").unwrap_or_else(|| name.clone());
             let status = evaluation
                 .pointer("/status")
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_owned();
-            (name, status)
+            (key, name, status)
         })
         .collect()
 }
@@ -551,6 +570,96 @@ mod tests {
         )
         .unwrap();
         assert_eq!(notifications, vec!["check: running", "check: approved"]);
+    }
+
+    #[test]
+    fn wait_loop_retries_a_transient_poll_failure() {
+        let mut polls = vec![
+            Ok(vec![evaluation("running", true, true)]),
+            Err(Error("network blip".into())),
+            Ok(vec![evaluation("approved", true, true)]),
+        ]
+        .into_iter();
+        let mut notifications = Vec::new();
+        let (state, _) = wait_for_checks(
+            || polls.next().unwrap(),
+            |_| {},
+            || Duration::ZERO,
+            Duration::from_secs(60),
+            Duration::from_secs(10),
+            |line| notifications.push(line.to_string()),
+        )
+        .unwrap();
+        assert_eq!(state, "passed");
+        assert_eq!(
+            notifications,
+            vec![
+                "check: running",
+                "Polling failed; retrying: network blip",
+                "check: approved"
+            ]
+        );
+    }
+
+    #[test]
+    fn wait_loop_fails_after_repeated_poll_failures_or_a_failed_first_poll() {
+        let mut polls = vec![Ok(vec![evaluation("running", true, true)])].into_iter();
+        let result = wait_for_checks(
+            || polls.next().unwrap_or_else(|| Err(Error("down".into()))),
+            |_| {},
+            || Duration::ZERO,
+            Duration::from_secs(60),
+            Duration::from_secs(10),
+            |_| {},
+        );
+        assert_eq!(result.unwrap_err(), Error("down".into()));
+
+        let first = wait_for_checks(
+            || Err(Error("unauthorised".into())),
+            |_| {},
+            || Duration::ZERO,
+            Duration::from_secs(60),
+            Duration::from_secs(10),
+            |_| {},
+        );
+        assert_eq!(first.unwrap_err(), Error("unauthorised".into()));
+    }
+
+    #[test]
+    fn wait_loop_tracks_status_changes_by_evaluation_id() {
+        let check = |id: &str, name: &str, status: &str| {
+            json!({
+                "evaluationId": id,
+                "status": status,
+                "configuration": {"isEnabled": true, "isBlocking": true, "settings": {"displayName": name}},
+            })
+        };
+        let mut polls = vec![
+            vec![check("a", "Build", "running")],
+            vec![
+                check("b", "Reviewers", "approved"),
+                check("a", "Build", "running"),
+            ],
+            vec![
+                check("b", "Reviewers", "approved"),
+                check("a", "Build", "approved"),
+            ],
+        ]
+        .into_iter();
+        let mut notifications = Vec::new();
+        wait_for_checks(
+            || Ok(polls.next().unwrap()),
+            |_| {},
+            || Duration::ZERO,
+            Duration::from_secs(60),
+            Duration::from_secs(10),
+            |line| notifications.push(line.to_string()),
+        )
+        .unwrap();
+        assert_eq!(
+            notifications,
+            vec!["Build: running", "Reviewers: approved", "Build: approved"]
+        );
     }
 
     #[test]

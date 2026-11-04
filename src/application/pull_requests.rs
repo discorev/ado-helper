@@ -19,6 +19,7 @@ use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use url::Url;
 
+mod checks;
 mod management;
 
 struct Resolved {

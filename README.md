@@ -66,6 +66,7 @@ ado pr complete 123 --merge-strategy squash --delete-source-branch
 ado pr create --title "Add search" --work-item 456 --auto-complete --merge-strategy squash
 ado pr auto-complete 123
 ado pr auto-complete 123 --clear
+ado pr checks 123 --wait
 ado pr thread-status 123 --thread-id 456 --status fixed
 ado pr changes 123 --iteration 4
 ado pr clone 123
@@ -82,7 +83,9 @@ ado pr diff 123 --directory ~/Developer/ado-reviews/custom
 
 Repeat `--add-required-reviewer` to add a reviewer as required, or to switch an existing optional reviewer to required; it accepts the same identity forms as `--add-reviewer`. It sends the reviewer's current vote back unchanged, so it never resets a vote already cast, and re-reads the PR afterwards to confirm `isRequired: true` and the unchanged vote. A reviewer may not be passed to both `--add-reviewer` and `--add-required-reviewer`.
 
-`pr complete` completes the PR using `--merge-strategy no-fast-forward|squash|rebase|rebase-merge` (default `no-fast-forward`). It keeps the source branch unless `--delete-source-branch` is given. It refuses a draft PR, a PR that is not active, and a PR whose `mergeStatus` is not `succeeded`. It pins the merge to the PR's current source commit (`lastMergeSourceCommit`), so a push after you looked is rejected rather than merged. Azure DevOps may finish the merge asynchronously; confirm with `ado pr show`.
+`pr complete` completes the PR using `--merge-strategy no-fast-forward|squash|rebase|rebase-merge` (default `no-fast-forward`). It keeps the source branch unless `--delete-source-branch` is given. It refuses a draft PR, a PR that is not active, and a PR whose `mergeStatus` is not `succeeded`. It pins the merge to the PR's current source commit (`lastMergeSourceCommit`), so a push after you looked is rejected rather than merged. Azure DevOps may finish the merge asynchronously; confirm with `ado pr show`. If completion fails and an enabled, blocking branch policy has not passed, the error names the blocking policies and their status and suggests `ado pr checks N --wait`. If the PR is still active after completing (Azure DevOps rebuilt the merge commit and re-ran required builds), run `ado pr checks N --wait` and retry.
+
+`pr checks` reports branch-policy status: `ado pr checks [TARGET] [--wait] [--timeout SECONDS] [--interval SECONDS]`. Each enabled policy evaluation becomes one entry in `checks`; disabled policies are omitted. Only enabled, *blocking* evaluations count toward `summary` and the overall `state`: `approved` or `notApplicable` count as passed, `rejected` or `broken` count as rejected, and anything else (`queued`, `running`, or an unrecognised status) counts as pending; an expired build keeps whatever status Azure DevOps reports for it, which is usually one of the pending statuses. `state` is `rejected` if any blocking evaluation is rejected, else `pending` if any is still pending, else `passed`. The command exits `0` for `passed`, `2` for `rejected`, and `3` for `pending` (or, with `--wait`, for `timedOut`); a generic error still exits `1`. With `--wait`, it polls every `--interval` seconds (default 15, minimum 5) for up to `--timeout` seconds (default 1800, must be greater than zero), printing a stderr line each time a check's status changes, and returns as soon as the state is no longer pending so a blocking rejection is reported immediately. Run `ado pr checks 123 --wait` as a background task so an agent is woken only once checks settle, instead of polling `ado pr show` in a loop. It needs only the **Code (Read)** scope, which the **Code (Read & write)** scope set up above already covers.
 
 `pr auto-complete` sets auto-complete as the authenticated user, so Azure DevOps completes the PR itself once policies pass, instead of completing it immediately like `pr complete`. `--merge-strategy` is case-insensitive and also accepts the hyphenated `pr complete` forms (default `noFastForward`). Unlike `pr complete`, it deletes the source branch by default; pass `--keep-source-branch` to keep it. Other existing completion options, such as work-item transition and the merge commit message, are sent back unchanged so they are not reset. `--clear` cancels auto-complete and cannot be combined with the other options. Either way, it reads the PR back afterwards and confirms the change took effect.
 
@@ -159,6 +162,7 @@ The JSON output contracts for pull-request mutations and queries are:
 - `pr create` and `pr update`: `{id, url, fields}`, where `fields` is Azure DevOps' complete pull-request object.
 - `pr complete`: Azure DevOps' complete pull-request object as returned by the update, which may still show `status: active` while the merge finishes.
 - `pr auto-complete`: Azure DevOps' complete pull-request object, read back after the change to confirm it took effect.
+- `pr checks`: `{pullRequestId, url, state, summary: {passed, rejected, pending}, checks}`, where each entry in `checks` is `{name, type, blocking, status, expired, buildId, buildUrl}`; `buildId` and `buildUrl` are `null` for a non-build policy.
 - `pr vote`: Azure DevOps' complete reviewer object (`IdentityRefWithVote`), including the resulting `vote` and `isRequired`.
 - `pr thread-status`: Azure DevOps' complete thread object, including the resulting `status`.
 - `pr comment --thread-id`: Azure DevOps' complete comment object.
@@ -173,7 +177,7 @@ The JSON output contracts for work items are:
 
 For automation and agents, successful PR data commands and `wi query`, `show`, `comments`, `comment`, `create`, and `update` output JSON on stdout. Diagnostics go to stderr and failures return a nonzero exit status. Authentication and help remain human-readable and require an interactive terminal where secrets or confirmation are involved. Never parse diagnostics for data, and never place tokens in arguments or environment variables.
 
-The offline suite exercises mock ADO responses, credential-store failures and real temporary Git repositories. The Linux container suite additionally exercises a real Secret Service round-trip. Live ADO permissions, organisation policy and credential-store approval must be verified during interactive setup; tests do not write real credentials or mutate live pull requests. This version reads and updates PR metadata, labels, reviewers, work-item links, changes and threads, and reads and updates work items; build logs and policy evaluations are not exposed as commands.
+The offline suite exercises mock ADO responses, credential-store failures and real temporary Git repositories. The Linux container suite additionally exercises a real Secret Service round-trip. Live ADO permissions, organisation policy and credential-store approval must be verified during interactive setup; tests do not write real credentials or mutate live pull requests. This version reads and updates PR metadata, labels, reviewers, work-item links, changes and threads, reads and updates work items, and reads branch-policy evaluation status; build logs themselves are not exposed as a command.
 
 ## License
 

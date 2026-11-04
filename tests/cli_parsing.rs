@@ -1308,3 +1308,84 @@ fn parses_work_item_update_and_requires_a_field() {
     );
     assert!(cli::parse(&svec(&["wi", "update", "12"])).is_err());
 }
+
+#[test]
+fn parses_pr_checks_defaults_and_target_forms() {
+    assert_eq!(
+        cli::parse(&svec(&["pr", "checks"])).unwrap(),
+        CliCommand::PrChecks {
+            target: PullRequestTarget::CurrentBranch,
+            wait: false,
+            timeout: 1800,
+            interval: 15,
+            profile: None,
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&["pr", "checks", "42"])).unwrap(),
+        CliCommand::PrChecks {
+            target: PullRequestTarget::Number(42),
+            wait: false,
+            timeout: 1800,
+            interval: 15,
+            profile: None,
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "checks",
+            "https://dev.azure.com/acme/Project/_git/Repo/pullrequest/42",
+        ]))
+        .unwrap(),
+        CliCommand::PrChecks {
+            target: PullRequestTarget::Url(
+                "https://dev.azure.com/acme/Project/_git/Repo/pullrequest/42".into()
+            ),
+            wait: false,
+            timeout: 1800,
+            interval: 15,
+            profile: None,
+        }
+    );
+}
+
+#[test]
+fn parses_pr_checks_wait_with_timeout_and_interval() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "checks",
+            "42",
+            "--wait",
+            "--timeout",
+            "60",
+            "--interval",
+            "10",
+            "--profile",
+            "work",
+        ]))
+        .unwrap(),
+        CliCommand::PrChecks {
+            target: PullRequestTarget::Number(42),
+            wait: true,
+            timeout: 60,
+            interval: 10,
+            profile: Some("work".into()),
+        }
+    );
+}
+
+#[test]
+fn pr_checks_rejects_short_interval_zero_timeout_and_timing_options_without_wait() {
+    for args in [
+        svec(&["pr", "checks", "42", "--wait", "--interval", "4"]),
+        svec(&["pr", "checks", "42", "--wait", "--timeout", "0"]),
+        svec(&["pr", "checks", "42", "--timeout", "60"]),
+        svec(&["pr", "checks", "42", "--interval", "10"]),
+        svec(&["pr", "checks", "42", "--wait", "--wait"]),
+        svec(&["pr", "checks", "42", "43"]),
+    ] {
+        assert!(cli::parse(&args).is_err(), "{args:?}");
+    }
+}

@@ -1350,3 +1350,39 @@ fn repository_and_branch_requests_parse_expected_values() {
         "a".repeat(40)
     );
 }
+#[test]
+fn policy_evaluations_builds_artifact_id_and_uses_preview_version() {
+    let project = "11111111-1111-1111-1111-111111111111";
+    let m = Mock::new(move |r, _| {
+        assert_eq!(
+            r.url.path(),
+            format!("/acme/{project}/_apis/policy/evaluations")
+        );
+        let q = query(r);
+        assert_eq!(
+            q["artifactId"],
+            format!("vstfs:///CodeReview/CodeReviewId/{project}/42")
+        );
+        assert_eq!(q["api-version"], "7.1-preview.1");
+        Ok(response(
+            r,
+            200,
+            &json!({"value": [{"evaluationId": "a", "status": "approved"}]}),
+            &[],
+        ))
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    let evaluations = c.policy_evaluations(project, 42).unwrap();
+    assert_eq!(evaluations.len(), 1);
+    assert_eq!(evaluations[0]["status"], "approved");
+    assert_eq!(c.transport.count(), 1)
+}
+#[test]
+fn policy_evaluations_rejects_bad_input_without_sending() {
+    let m = Mock::new(|_, _| panic!("request"));
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert!(c.policy_evaluations("", 42).is_err());
+    assert!(c.policy_evaluations("Project", 0).is_err());
+    assert!(c.policy_evaluations("Project", -1).is_err());
+    assert_eq!(c.transport.count(), 0)
+}

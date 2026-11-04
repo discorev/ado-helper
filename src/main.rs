@@ -5,13 +5,17 @@ use application::Application;
 
 fn main() {
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
-    if let Err(error) = run() {
-        eprintln!("error: {}", terminal_safe(&error.to_string()));
-        std::process::exit(1)
+    match run() {
+        Err(error) => {
+            eprintln!("error: {}", terminal_safe(&error.to_string()));
+            std::process::exit(1)
+        }
+        Ok(code) if code != 0 => std::process::exit(code),
+        Ok(_) => {}
     }
 }
 
-fn run() -> Result<()> {
+fn run() -> Result<i32> {
     let args: Vec<String> = std::env::args_os()
         .skip(1)
         .map(|value| {
@@ -28,7 +32,7 @@ fn run() -> Result<()> {
     let command = ado_core::cli::parse(&args)?;
     if command == CliCommand::Help {
         println!("{HELP}");
-        return Ok(());
+        return Ok(0);
     }
     Application::new()?.run(command)
 }
@@ -54,6 +58,7 @@ const HELP: &str = "Usage:
   ado pr auto-complete [TARGET] [--merge-strategy noFastForward|squash|rebase|rebaseMerge]
       [--delete-source-branch | --keep-source-branch] [--profile NAME]
   ado pr auto-complete [TARGET] --clear [--profile NAME]
+  ado pr checks [TARGET] [--wait] [--timeout SECONDS] [--interval SECONDS] [--profile NAME]
   ado pr open TARGET [--profile NAME]
   ado pr threads [TARGET] [--profile NAME]
   ado pr vote [TARGET] --vote approve|approve-with-suggestions|wait|reject|reset
@@ -127,6 +132,11 @@ mod tests {
         assert!(text.contains("  ado pr auto-complete [TARGET] --clear [--profile NAME]"));
         assert!(text.contains("TARGET is an Azure DevOps PR URL"));
         assert!(!text.contains("ado pr complete"));
+        let checks = help(&["pr", "checks", "--help"]).unwrap();
+        assert!(checks.starts_with("Usage:\n  ado pr checks [TARGET] [--wait]"));
+        assert!(checks.contains("[--timeout SECONDS] [--interval SECONDS] [--profile NAME]"));
+        assert!(!checks.contains("ado pr auto-complete"));
+        assert_eq!(help(&["pr", "checks", "-h"]), Some(checks));
         let comment = help(&["pr", "comment", "-h"]).unwrap();
         assert_eq!(comment.matches("  ado pr comment ").count(), 3);
         assert!(!comment.contains("edit-comment"));
@@ -138,6 +148,8 @@ mod tests {
     fn group_help_lists_the_group_and_unknown_commands_fall_through() {
         let group = help(&["pr", "--help"]).unwrap();
         assert!(group.contains("ado pr create") && !group.contains("ado wi"));
+        assert!(group.contains("ado pr checks [TARGET]"));
+        assert!(group.contains("ado pr auto-complete [TARGET]"));
         assert_eq!(help(&["pr", "nope", "--help"]), None);
         assert_eq!(help(&["--help"]), None);
         assert_eq!(help(&["pr", "show", "1"]), None);

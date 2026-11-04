@@ -83,6 +83,13 @@ pub enum CliCommand {
         options: Option<AutoCompleteOptions>,
         profile: Option<String>,
     },
+    PrChecks {
+        target: PullRequestTarget,
+        wait: bool,
+        timeout: u64,
+        interval: u64,
+        profile: Option<String>,
+    },
     PrShow {
         target: PullRequestTarget,
         profile: Option<String>,
@@ -230,6 +237,7 @@ pub fn parse(arguments: &[String]) -> Result<CliCommand> {
         ("pr", "update") => parse_pr_update(args),
         ("pr", "complete") => parse_pr_complete(args),
         ("pr", "auto-complete") => parse_pr_auto_complete(args),
+        ("pr", "checks") => parse_pr_checks(args),
         ("pr", "show") => parse_simple(args, true),
         ("pr", "open") => parse_pr_open(args),
         ("pr", "threads") => parse_simple(args, false),
@@ -849,6 +857,46 @@ fn parse_pr_auto_complete(args: &[String]) -> Result<CliCommand> {
     })
 }
 
+fn parse_pr_checks(args: &[String]) -> Result<CliCommand> {
+    let mut values = multi_values(
+        args,
+        &["--timeout", "--interval", "--profile"],
+        &[],
+        &["--wait"],
+    )?;
+    let target = values.target()?;
+    let wait = values.flags.contains("--wait");
+    let timeout_raw = values.take("--timeout");
+    let interval_raw = values.take("--interval");
+    if !wait && (timeout_raw.is_some() || interval_raw.is_some()) {
+        return Err(Error("--timeout and --interval require --wait.".into()));
+    }
+    let timeout = match timeout_raw {
+        Some(value) => value
+            .parse::<u64>()
+            .ok()
+            .filter(|value| *value > 0)
+            .ok_or_else(|| Error("--timeout must be a positive integer of seconds.".into()))?,
+        None => 1800,
+    };
+    let interval = match interval_raw {
+        Some(value) => value
+            .parse::<u64>()
+            .ok()
+            .filter(|value| *value >= 5)
+            .ok_or_else(|| {
+                Error("--interval must be an integer of seconds, 5 or greater.".into())
+            })?,
+        None => 15,
+    };
+    Ok(CliCommand::PrChecks {
+        target,
+        wait,
+        timeout,
+        interval,
+        profile: values.take("--profile"),
+    })
+}
 fn parse_simple(args: &[String], show: bool) -> Result<CliCommand> {
     let mut v = common(args, &["--profile"])?;
     let target = v.target()?;

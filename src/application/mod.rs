@@ -19,7 +19,7 @@ impl Application {
         })
     }
 
-    pub(crate) fn run(&self, c: CliCommand) -> Result<()> {
+    pub(crate) fn run(&self, c: CliCommand) -> Result<i32> {
         match c {
             CliCommand::Help => println!("{HELP}"),
             CliCommand::AuthAdd {
@@ -108,6 +108,15 @@ impl Application {
                 delete_source_branch,
                 profile.as_deref(),
             )?,
+            CliCommand::PrChecks {
+                target,
+                wait,
+                timeout,
+                interval,
+                profile,
+            } => {
+                return self.pr_checks(target, wait, timeout, interval, profile.as_deref());
+            }
             CliCommand::PrShow { target, profile } => self.pr_show(target, profile.as_deref())?,
             CliCommand::PrOpen { target, profile } => self.pr_open(target, profile.as_deref())?,
             CliCommand::PrThreads { target, profile } => {
@@ -273,6 +282,6 @@ impl Application {
                 project,
             } => self.wi_open(id, profile.as_deref(), project.as_deref())?,
         }
-        Ok(())
+        Ok(0)
     }
 }

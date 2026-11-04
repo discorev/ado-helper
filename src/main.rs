@@ -5,13 +5,17 @@ use application::Application;
 
 fn main() {
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
-    if let Err(error) = run() {
-        eprintln!("error: {}", terminal_safe(&error.to_string()));
-        std::process::exit(1)
+    match run() {
+        Err(error) => {
+            eprintln!("error: {}", terminal_safe(&error.to_string()));
+            std::process::exit(1)
+        }
+        Ok(code) if code != 0 => std::process::exit(code),
+        Ok(_) => {}
     }
 }
 
-fn run() -> Result<()> {
+fn run() -> Result<i32> {
     let args: Vec<String> = std::env::args_os()
         .skip(1)
         .map(|value| {
@@ -23,7 +27,7 @@ fn run() -> Result<()> {
     let command = ado_core::cli::parse(&args)?;
     if command == CliCommand::Help {
         println!("{HELP}");
-        return Ok(());
+        return Ok(0);
     }
     Application::new()?.run(command)
 }
@@ -44,6 +48,7 @@ const HELP: &str = "Usage:
       [--add-required-reviewer USER]... [--tags TAGS] [--target BRANCH] [--profile NAME]
   ado pr complete [TARGET] [--merge-strategy no-fast-forward|squash|rebase|rebase-merge]
       [--delete-source-branch] [--profile NAME]
+  ado pr checks [TARGET] [--wait] [--timeout SECONDS] [--interval SECONDS] [--profile NAME]
   ado pr open TARGET [--profile NAME]
   ado pr threads [TARGET] [--profile NAME]
   ado pr vote [TARGET] --vote approve|approve-with-suggestions|wait|reject|reset

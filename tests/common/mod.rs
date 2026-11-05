@@ -4,7 +4,7 @@ pub use ado_core::{
     Error, Result,
     ado_client::{AdoClient, HttpRequest, HttpResponse, HttpTransport},
     auth::{self, AuthOps},
-    cli::{self, CliCommand, PullRequestTarget, WorkItemQuery},
+    cli::{self, AutoCompleteOptions, CliCommand, PullRequestTarget, WorkItemQuery},
     comment_anchor,
     git::*,
     keychain::{CredentialStore, KeychainStore},

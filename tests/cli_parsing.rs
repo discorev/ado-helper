@@ -624,6 +624,7 @@ fn parses_pr_create_with_repeatable_reviewers_and_work_items() {
             force: false,
             work_items: vec![12, 13],
             tags: Some("api,urgent".into()),
+            auto_complete: None,
             profile: Some("work".into()),
         }
     );
@@ -664,6 +665,7 @@ fn parses_pr_create_force_and_rejects_it_without_a_reviewer() {
             force: true,
             work_items: vec![],
             tags: None,
+            auto_complete: None,
             profile: None,
         }
     );
@@ -894,6 +896,198 @@ fn parses_pr_complete_defaults_and_validates_strategy() {
             "--delete-source-branch",
         ]),
         svec(&["pr", "complete", "42", "43"]),
+    ] {
+        assert!(cli::parse(&args).is_err(), "{args:?}");
+    }
+}
+
+#[test]
+fn parses_pr_auto_complete_defaults_and_validates_strategy() {
+    assert_eq!(
+        cli::parse(&svec(&["pr", "auto-complete", "62039"])).unwrap(),
+        CliCommand::PrAutoComplete {
+            target: PullRequestTarget::Number(62039),
+            options: Some(AutoCompleteOptions {
+                merge_strategy: "noFastForward".into(),
+                delete_source_branch: true,
+            }),
+            profile: None,
+        }
+    );
+    for (input, expected) in [
+        ("noFastForward", "noFastForward"),
+        ("squash", "squash"),
+        ("SQUASH", "squash"),
+        ("rebase", "rebase"),
+        ("rebaseMerge", "rebaseMerge"),
+        ("rebase-merge", "rebaseMerge"),
+    ] {
+        assert_eq!(
+            cli::parse(&svec(&[
+                "pr",
+                "auto-complete",
+                "62039",
+                "--merge-strategy",
+                input,
+            ]))
+            .unwrap(),
+            CliCommand::PrAutoComplete {
+                target: PullRequestTarget::Number(62039),
+                options: Some(AutoCompleteOptions {
+                    merge_strategy: expected.into(),
+                    delete_source_branch: true,
+                }),
+                profile: None,
+            },
+            "{input}"
+        );
+    }
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "auto-complete",
+            "62039",
+            "--keep-source-branch",
+            "--profile",
+            "work",
+        ]))
+        .unwrap(),
+        CliCommand::PrAutoComplete {
+            target: PullRequestTarget::Number(62039),
+            options: Some(AutoCompleteOptions {
+                merge_strategy: "noFastForward".into(),
+                delete_source_branch: false,
+            }),
+            profile: Some("work".into()),
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&["pr", "auto-complete", "62039", "--clear"])).unwrap(),
+        CliCommand::PrAutoComplete {
+            target: PullRequestTarget::Number(62039),
+            options: None,
+            profile: None,
+        }
+    );
+    for args in [
+        svec(&[
+            "pr",
+            "auto-complete",
+            "62039",
+            "--merge-strategy",
+            "fast-forward",
+        ]),
+        svec(&[
+            "pr",
+            "auto-complete",
+            "62039",
+            "--delete-source-branch",
+            "--keep-source-branch",
+        ]),
+        svec(&[
+            "pr",
+            "auto-complete",
+            "62039",
+            "--clear",
+            "--merge-strategy",
+            "squash",
+        ]),
+        svec(&[
+            "pr",
+            "auto-complete",
+            "62039",
+            "--clear",
+            "--delete-source-branch",
+        ]),
+        svec(&[
+            "pr",
+            "auto-complete",
+            "62039",
+            "--clear",
+            "--keep-source-branch",
+        ]),
+    ] {
+        assert!(cli::parse(&args).is_err(), "{args:?}");
+    }
+}
+
+#[test]
+fn parses_pr_create_auto_complete_options_and_rejects_them_without_the_flag() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "create",
+            "--title",
+            "Title",
+            "--auto-complete",
+        ]))
+        .unwrap(),
+        CliCommand::PrCreate {
+            source: None,
+            target: None,
+            title: "Title".into(),
+            description_file: None,
+            draft: false,
+            reviewers: vec![],
+            force: false,
+            work_items: vec![],
+            tags: None,
+            auto_complete: Some(AutoCompleteOptions {
+                merge_strategy: "noFastForward".into(),
+                delete_source_branch: true,
+            }),
+            profile: None,
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "create",
+            "--title",
+            "Title",
+            "--auto-complete",
+            "--merge-strategy",
+            "squash",
+            "--keep-source-branch",
+        ]))
+        .unwrap(),
+        CliCommand::PrCreate {
+            source: None,
+            target: None,
+            title: "Title".into(),
+            description_file: None,
+            draft: false,
+            reviewers: vec![],
+            force: false,
+            work_items: vec![],
+            tags: None,
+            auto_complete: Some(AutoCompleteOptions {
+                merge_strategy: "squash".into(),
+                delete_source_branch: false,
+            }),
+            profile: None,
+        }
+    );
+    for args in [
+        svec(&[
+            "pr",
+            "create",
+            "--title",
+            "Title",
+            "--merge-strategy",
+            "squash",
+        ]),
+        svec(&["pr", "create", "--title", "Title", "--delete-source-branch"]),
+        svec(&["pr", "create", "--title", "Title", "--keep-source-branch"]),
+        svec(&[
+            "pr",
+            "create",
+            "--title",
+            "Title",
+            "--auto-complete",
+            "--delete-source-branch",
+            "--keep-source-branch",
+        ]),
     ] {
         assert!(cli::parse(&args).is_err(), "{args:?}");
     }

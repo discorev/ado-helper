@@ -5,7 +5,7 @@ use super::{
 use ado_core::{
     Error, Result,
     ado_client::AdoClient,
-    cli::PullRequestTarget,
+    cli::{AutoCompleteOptions, PullRequestTarget},
     comment_anchor,
     git::{
         AzureGitRemote, GitRunner, GitRunning, LocalGitContext, PullRequestGitInfo, ReviewCheckout,
@@ -117,6 +117,33 @@ impl Application {
             r.client
                 .update_pull_request(&repo.project, &repo.repository, r.locator.id, &body)?;
         write_json(&updated)
+    }
+
+    pub(super) fn pr_auto_complete(
+        &self,
+        target: PullRequestTarget,
+        options: Option<&AutoCompleteOptions>,
+        profile_name: Option<&str>,
+    ) -> Result<()> {
+        let r = self.resolve(target, profile_name)?;
+        let repo = repository_identity(&r.pull_request)?;
+        let identity = r.client.identity()?;
+        if identity.id != r.profile.identity.id {
+            return Err(Error(format!(
+                "The saved token authenticated as a different account. No auto-complete change was made; run 'ado auth update {}'.",
+                r.profile.name
+            )));
+        }
+        let verified = set_auto_complete(
+            &r.client,
+            &repo.project,
+            &repo.repository,
+            r.locator.id,
+            &r.pull_request,
+            &identity.id,
+            options,
+        )?;
+        write_json(&verified)
     }
 
     pub(super) fn pr_thread_status(
@@ -680,6 +707,119 @@ fn completion_body(
     }))
 }
 
+const CLEARED_IDENTITY: &str = "00000000-0000-0000-0000-000000000000";
+
+/// Builds the PATCH body to set or clear auto-complete. When setting, the PR's existing
+/// `completionOptions` (e.g. `transitionWorkItems`, `mergeCommitMessage`) are sent back with only
+/// `mergeStrategy` and `deleteSourceBranch` overwritten, so a PATCH that replaces the object
+/// cannot silently reset them.
+fn auto_complete_body(
+    pull_request: &Value,
+    identity_id: &str,
+    options: Option<&AutoCompleteOptions>,
+) -> Value {
+    match options {
+        Some(options) => {
+            let mut completion_options = pull_request
+                .get("completionOptions")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            completion_options.insert(
+                "mergeStrategy".into(),
+                json!(options.merge_strategy.as_str()),
+            );
+            completion_options.insert(
+                "deleteSourceBranch".into(),
+                json!(options.delete_source_branch),
+            );
+            json!({
+                "autoCompleteSetBy": {"id": identity_id},
+                "completionOptions": completion_options,
+            })
+        }
+        None => json!({"autoCompleteSetBy": {"id": CLEARED_IDENTITY}}),
+    }
+}
+
+fn validate_auto_complete(
+    pull_request: &Value,
+    identity_id: &str,
+    options: Option<&AutoCompleteOptions>,
+) -> Result<()> {
+    let set_by_id = pull_request
+        .pointer("/autoCompleteSetBy/id")
+        .and_then(Value::as_str);
+    match options {
+        Some(options) => {
+            if !set_by_id.is_some_and(|id| id.eq_ignore_ascii_case(identity_id)) {
+                return Err(Error(format!(
+                    "autoCompleteSetBy.id was '{}', not the authenticated user.",
+                    set_by_id.unwrap_or("<absent>")
+                )));
+            }
+            let actual_strategy = pull_request
+                .pointer("/completionOptions/mergeStrategy")
+                .and_then(Value::as_str);
+            if actual_strategy != Some(options.merge_strategy.as_str()) {
+                return Err(Error(format!(
+                    "completionOptions.mergeStrategy was '{}', not '{}'.",
+                    actual_strategy.unwrap_or("<absent>"),
+                    options.merge_strategy
+                )));
+            }
+            let actual_delete = pull_request
+                .pointer("/completionOptions/deleteSourceBranch")
+                .and_then(Value::as_bool);
+            if actual_delete != Some(options.delete_source_branch) {
+                return Err(Error(format!(
+                    "completionOptions.deleteSourceBranch was '{:?}', not '{}'.",
+                    actual_delete, options.delete_source_branch
+                )));
+            }
+            Ok(())
+        }
+        None => {
+            let cleared = match set_by_id {
+                None => true,
+                Some(id) => id.eq_ignore_ascii_case(CLEARED_IDENTITY),
+            };
+            if cleared {
+                Ok(())
+            } else {
+                Err(Error(format!(
+                    "autoCompleteSetBy.id was still '{}', not cleared.",
+                    set_by_id.unwrap_or("<absent>")
+                )))
+            }
+        }
+    }
+}
+
+/// Patches auto-complete, reads the pull request back, and verifies the change. Shared by
+/// `pr auto-complete` and `pr create --auto-complete` so the latter can reuse the same
+/// patch-then-verify behaviour against its own final readback.
+#[allow(clippy::too_many_arguments)]
+fn set_auto_complete(
+    client: &AdoClient,
+    project: &str,
+    repository: &str,
+    id: i64,
+    current_pull_request: &Value,
+    identity_id: &str,
+    options: Option<&AutoCompleteOptions>,
+) -> Result<Value> {
+    let body = auto_complete_body(current_pull_request, identity_id, options);
+    client.update_pull_request(project, repository, id, &body)?;
+    let readback = client.pull_request(id)?;
+    validate_auto_complete(&readback, identity_id, options).map_err(|Error(reason)| {
+        Error(format!(
+            "The auto-complete request was sent, but verification failed: {reason}"
+        ))
+    })?;
+    Ok(readback)
+}
+
 fn thread_status_value(status: &str) -> &'static str {
     match status {
         "active" => "active",
@@ -1101,6 +1241,112 @@ mod tests {
             pr[field] = value;
             assert!(completion_body(&pr, "squash", false).is_err(), "{field}");
         }
+    }
+
+    #[test]
+    fn auto_complete_body_sets_identity_and_merge_options_without_existing_completion_options() {
+        let pr = json!({});
+        let options = AutoCompleteOptions {
+            merge_strategy: "noFastForward".into(),
+            delete_source_branch: true,
+        };
+        assert_eq!(
+            auto_complete_body(&pr, "id-1", Some(&options)),
+            json!({
+                "autoCompleteSetBy": {"id": "id-1"},
+                "completionOptions": {"mergeStrategy": "noFastForward", "deleteSourceBranch": true},
+            })
+        );
+    }
+
+    #[test]
+    fn auto_complete_body_preserves_other_existing_completion_options() {
+        let pr = json!({
+            "completionOptions": {
+                "mergeStrategy": "squash",
+                "deleteSourceBranch": false,
+                "transitionWorkItems": true,
+                "mergeCommitMessage": "Merging",
+            }
+        });
+        let options = AutoCompleteOptions {
+            merge_strategy: "rebase".into(),
+            delete_source_branch: true,
+        };
+        assert_eq!(
+            auto_complete_body(&pr, "id-1", Some(&options)),
+            json!({
+                "autoCompleteSetBy": {"id": "id-1"},
+                "completionOptions": {
+                    "mergeStrategy": "rebase",
+                    "deleteSourceBranch": true,
+                    "transitionWorkItems": true,
+                    "mergeCommitMessage": "Merging",
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn auto_complete_body_clear_sends_only_the_zero_guid() {
+        assert_eq!(
+            auto_complete_body(&json!({}), "id-1", None),
+            json!({"autoCompleteSetBy": {"id": CLEARED_IDENTITY}})
+        );
+        assert_eq!(CLEARED_IDENTITY, "00000000-0000-0000-0000-000000000000");
+    }
+
+    #[test]
+    fn validate_auto_complete_set_checks_identity_strategy_and_delete_flag() {
+        let options = AutoCompleteOptions {
+            merge_strategy: "squash".into(),
+            delete_source_branch: true,
+        };
+        let good = json!({
+            "autoCompleteSetBy": {"id": "ID-1"},
+            "completionOptions": {"mergeStrategy": "squash", "deleteSourceBranch": true},
+        });
+        assert!(validate_auto_complete(&good, "id-1", Some(&options)).is_ok());
+        let wrong_id = json!({
+            "autoCompleteSetBy": {"id": "other"},
+            "completionOptions": {"mergeStrategy": "squash", "deleteSourceBranch": true},
+        });
+        assert!(validate_auto_complete(&wrong_id, "id-1", Some(&options)).is_err());
+        let wrong_strategy = json!({
+            "autoCompleteSetBy": {"id": "id-1"},
+            "completionOptions": {"mergeStrategy": "rebase", "deleteSourceBranch": true},
+        });
+        assert!(validate_auto_complete(&wrong_strategy, "id-1", Some(&options)).is_err());
+        let wrong_delete = json!({
+            "autoCompleteSetBy": {"id": "id-1"},
+            "completionOptions": {"mergeStrategy": "squash", "deleteSourceBranch": false},
+        });
+        assert!(validate_auto_complete(&wrong_delete, "id-1", Some(&options)).is_err());
+        let missing_set_by = json!({
+            "completionOptions": {"mergeStrategy": "squash", "deleteSourceBranch": true},
+        });
+        assert!(validate_auto_complete(&missing_set_by, "id-1", Some(&options)).is_err());
+    }
+
+    #[test]
+    fn validate_auto_complete_clear_accepts_absent_null_or_zero_and_rejects_a_real_id() {
+        assert!(validate_auto_complete(&json!({}), "id-1", None).is_ok());
+        assert!(
+            validate_auto_complete(&json!({"autoCompleteSetBy": Value::Null}), "id-1", None)
+                .is_ok()
+        );
+        assert!(
+            validate_auto_complete(
+                &json!({"autoCompleteSetBy": {"id": CLEARED_IDENTITY}}),
+                "id-1",
+                None
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_auto_complete(&json!({"autoCompleteSetBy": {"id": "id-1"}}), "id-1", None)
+                .is_err()
+        );
     }
 
     #[test]

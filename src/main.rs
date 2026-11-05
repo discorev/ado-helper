@@ -38,12 +38,16 @@ const HELP: &str = "Usage:
   ado pr show [TARGET] [--profile NAME]
   ado pr create [--source BRANCH] [--target BRANCH] --title TEXT
       [--description-file PATH] [--draft] [--reviewer USER]... [--force] [--work-item ID]...
-      [--tags TAGS] [--profile NAME]
+      [--tags TAGS] [--auto-complete [--merge-strategy noFastForward|squash|rebase|rebaseMerge]
+      [--delete-source-branch | --keep-source-branch]] [--profile NAME]
   ado pr update [TARGET] [--title TEXT] [--description-file PATH]
       [--status active|abandoned] [--draft | --ready] [--add-reviewer USER]... [--force]
       [--add-required-reviewer USER]... [--tags TAGS] [--target BRANCH] [--profile NAME]
   ado pr complete [TARGET] [--merge-strategy no-fast-forward|squash|rebase|rebase-merge]
       [--delete-source-branch] [--profile NAME]
+  ado pr auto-complete [TARGET] [--merge-strategy noFastForward|squash|rebase|rebaseMerge]
+      [--delete-source-branch | --keep-source-branch] [--profile NAME]
+  ado pr auto-complete [TARGET] --clear [--profile NAME]
   ado pr open TARGET [--profile NAME]
   ado pr threads [TARGET] [--profile NAME]
   ado pr vote [TARGET] --vote approve|approve-with-suggestions|wait|reject|reset

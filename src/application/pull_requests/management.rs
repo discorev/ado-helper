@@ -57,12 +57,27 @@ impl Application {
         force: bool,
         work_items: &[i64],
         tags: Option<&str>,
+        auto_complete: Option<&AutoCompleteOptions>,
         profile_name: Option<&str>,
     ) -> Result<()> {
         let context = LocalGitContext::discover(&GitRunner, None)?;
         let organization = Organization::parse(&context.remote.organization)?;
         let profile = self.selected_profile(profile_name, &organization)?;
         let client = AdoClient::new(organization.clone(), &self.keychain.read(&profile)?)?;
+        // Checked up front, before the pull request exists, so a mismatched token never leaves
+        // an orphaned PR behind with auto-complete silently unset.
+        let identity = if auto_complete.is_some() {
+            let identity = client.identity()?;
+            if identity.id != profile.identity.id {
+                return Err(Error(format!(
+                    "The saved token authenticated as a different account. No pull request was created; run 'ado auth update {}'.",
+                    profile.name
+                )));
+            }
+            Some(identity)
+        } else {
+            None
+        };
         let source_name = source.unwrap_or(&context.branch);
         let source_ref = branch_ref(source_name)?;
         let source_tip = client.branch_tip(
@@ -142,23 +157,64 @@ impl Application {
             }
             Ok(())
         })();
+        let auto_complete_suffix = if auto_complete.is_some() {
+            " Auto-complete was not set."
+        } else {
+            ""
+        };
         if let Err(error) = follow_up {
             return Err(Error(format!(
-                "Pull request {id} was created, but its reviewers or labels could not be completed: {error}"
+                "Pull request {id} was created, but its reviewers or labels could not be completed: {error}{auto_complete_suffix}"
             )));
         }
         let final_pull_request = client.pull_request(id).map_err(|error| {
             Error(format!(
-                "Pull request {id} was created, but final readback failed: {error}"
+                "Pull request {id} was created, but final readback failed: {error}{auto_complete_suffix}"
             ))
         })?;
-        validate_reviewers_present(&final_pull_request, &added_reviewers, "created")?;
-        write_json(&show_pull_request(
-            &final_pull_request,
-            &organization,
+        if let Err(Error(error)) =
+            validate_reviewers_present(&final_pull_request, &added_reviewers, "created")
+        {
+            return Err(Error(format!("{error}{auto_complete_suffix}")));
+        }
+        let Some(options) = auto_complete else {
+            return write_json(&show_pull_request(
+                &final_pull_request,
+                &organization,
+                &context.remote.project,
+                &context.remote.repository,
+            )?);
+        };
+        // Reviewers and labels are confirmed present before auto-complete is set, so a failed
+        // follow-up never results in auto-complete being set on an incomplete pull request.
+        let identity = identity.expect("auto_complete.is_some() implies identity was checked");
+        match set_auto_complete(
+            &client,
             &context.remote.project,
             &context.remote.repository,
-        )?)
+            id,
+            &final_pull_request,
+            &identity.id,
+            Some(options),
+        ) {
+            Ok(verified) => write_json(&show_pull_request(
+                &verified,
+                &organization,
+                &context.remote.project,
+                &context.remote.repository,
+            )?),
+            Err(error) => {
+                write_json(&show_pull_request(
+                    &final_pull_request,
+                    &organization,
+                    &context.remote.project,
+                    &context.remote.repository,
+                )?)?;
+                Err(Error(format!(
+                    "Pull request {id} was created, but auto-complete was NOT set: {error}"
+                )))
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

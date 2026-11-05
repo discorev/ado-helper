@@ -14,6 +14,11 @@ pub enum WorkItemQuery {
     Search(String),
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoCompleteOptions {
+    pub merge_strategy: String,
+    pub delete_source_branch: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
     Help,
     AuthAdd {
@@ -50,6 +55,7 @@ pub enum CliCommand {
         force: bool,
         work_items: Vec<i64>,
         tags: Option<String>,
+        auto_complete: Option<AutoCompleteOptions>,
         profile: Option<String>,
     },
     PrUpdate {
@@ -69,6 +75,11 @@ pub enum CliCommand {
         target: PullRequestTarget,
         merge_strategy: String,
         delete_source_branch: bool,
+        profile: Option<String>,
+    },
+    PrAutoComplete {
+        target: PullRequestTarget,
+        options: Option<AutoCompleteOptions>,
         profile: Option<String>,
     },
     PrShow {
@@ -217,6 +228,7 @@ pub fn parse(arguments: &[String]) -> Result<CliCommand> {
         ("pr", "create") => parse_pr_create(args),
         ("pr", "update") => parse_pr_update(args),
         ("pr", "complete") => parse_pr_complete(args),
+        ("pr", "auto-complete") => parse_pr_auto_complete(args),
         ("pr", "show") => parse_simple(args, true),
         ("pr", "open") => parse_pr_open(args),
         ("pr", "threads") => parse_simple(args, false),
@@ -559,10 +571,17 @@ fn parse_pr_create(args: &[String]) -> Result<CliCommand> {
             "--title",
             "--description-file",
             "--tags",
+            "--merge-strategy",
             "--profile",
         ],
         &["--reviewer", "--work-item"],
-        &["--draft", "--force"],
+        &[
+            "--draft",
+            "--force",
+            "--auto-complete",
+            "--delete-source-branch",
+            "--keep-source-branch",
+        ],
     )?;
     if values.positional.is_some() {
         return Err(Error(
@@ -588,6 +607,19 @@ fn parse_pr_create(args: &[String]) -> Result<CliCommand> {
                 .ok_or_else(|| Error("--work-item must be a positive integer.".into()))
         })
         .collect::<Result<Vec<_>>>()?;
+    let auto_complete = if values.flags.contains("--auto-complete") {
+        Some(extract_auto_complete_options(&mut values)?)
+    } else {
+        if values.options.contains_key("--merge-strategy") {
+            return Err(Error("--merge-strategy requires --auto-complete.".into()));
+        }
+        for flag in ["--delete-source-branch", "--keep-source-branch"] {
+            if values.flags.contains(flag) {
+                return Err(Error(format!("{flag} requires --auto-complete.")));
+            }
+        }
+        None
+    };
     Ok(CliCommand::PrCreate {
         source: values.take("--source"),
         target: values.take("--target"),
@@ -598,6 +630,7 @@ fn parse_pr_create(args: &[String]) -> Result<CliCommand> {
         force,
         work_items,
         tags: values.take("--tags"),
+        auto_complete,
         profile: values.take("--profile"),
     })
 }
@@ -726,6 +759,75 @@ fn parse_pr_complete(args: &[String]) -> Result<CliCommand> {
         merge_strategy,
         delete_source_branch: values.flags.contains("--delete-source-branch"),
         profile: values.take("--profile"),
+    })
+}
+
+/// Normalises a case-insensitive merge-strategy value (accepting the hyphenated forms used by
+/// `pr complete`, for consistency) into the Azure DevOps API's `mergeStrategy` value.
+fn normalize_merge_strategy(value: &str) -> Result<String> {
+    let normalized = value.to_ascii_lowercase().replace('-', "");
+    match normalized.as_str() {
+        "nofastforward" => Ok("noFastForward".into()),
+        "squash" => Ok("squash".into()),
+        "rebase" => Ok("rebase".into()),
+        "rebasemerge" => Ok("rebaseMerge".into()),
+        _ => Err(Error(
+            "--merge-strategy must be 'noFastForward', 'squash', 'rebase', or 'rebaseMerge'."
+                .into(),
+        )),
+    }
+}
+
+/// Shared by `pr create --auto-complete` and `pr auto-complete` to extract and validate the
+/// merge-strategy and delete/keep-source-branch options from an already-parsed `MultiValues`.
+fn extract_auto_complete_options(values: &mut MultiValues) -> Result<AutoCompleteOptions> {
+    let merge_strategy = match values.take("--merge-strategy") {
+        Some(value) => normalize_merge_strategy(&value)?,
+        None => "noFastForward".into(),
+    };
+    let delete = values.flags.contains("--delete-source-branch");
+    let keep = values.flags.contains("--keep-source-branch");
+    if delete && keep {
+        return Err(Error(
+            "--delete-source-branch and --keep-source-branch may not both be specified.".into(),
+        ));
+    }
+    Ok(AutoCompleteOptions {
+        merge_strategy,
+        delete_source_branch: !keep,
+    })
+}
+
+fn parse_pr_auto_complete(args: &[String]) -> Result<CliCommand> {
+    let mut values = multi_values(
+        args,
+        &["--merge-strategy", "--profile"],
+        &[],
+        &["--delete-source-branch", "--keep-source-branch", "--clear"],
+    )?;
+    let target = values.target()?;
+    let profile = values.take("--profile");
+    if values.flags.contains("--clear") {
+        if values.options.contains_key("--merge-strategy")
+            || values.flags.contains("--delete-source-branch")
+            || values.flags.contains("--keep-source-branch")
+        {
+            return Err(Error(
+                "--clear cannot be combined with --merge-strategy, --delete-source-branch, or --keep-source-branch."
+                    .into(),
+            ));
+        }
+        return Ok(CliCommand::PrAutoComplete {
+            target,
+            options: None,
+            profile,
+        });
+    }
+    let options = extract_auto_complete_options(&mut values)?;
+    Ok(CliCommand::PrAutoComplete {
+        target,
+        options: Some(options),
+        profile,
     })
 }
 

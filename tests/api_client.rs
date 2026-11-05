@@ -1152,6 +1152,45 @@ fn update_pull_request_sends_completion_and_retarget_bodies() {
 }
 
 #[test]
+fn update_pull_request_sends_auto_complete_set_and_clear_bodies() {
+    let m = Mock::new(|r, index| {
+        assert_eq!(r.method, "PATCH");
+        assert_eq!(
+            r.url.path(),
+            "/acme/Project/_apis/git/repositories/Repo/pullrequests/42"
+        );
+        assert_eq!(r.url.query(), Some("api-version=7.1"));
+        let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+        match index {
+            0 => assert_eq!(
+                body,
+                json!({
+                    "autoCompleteSetBy": {"id": "ollie"},
+                    "completionOptions": {"mergeStrategy": "noFastForward", "deleteSourceBranch": true},
+                })
+            ),
+            1 => assert_eq!(
+                body,
+                json!({"autoCompleteSetBy": {"id": "00000000-0000-0000-0000-000000000000"}})
+            ),
+            _ => panic!("unexpected request"),
+        }
+        Ok(response(r, 200, &json!({"pullRequestId": 42}), &[]))
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    for body in [
+        json!({
+            "autoCompleteSetBy": {"id": "ollie"},
+            "completionOptions": {"mergeStrategy": "noFastForward", "deleteSourceBranch": true},
+        }),
+        json!({"autoCompleteSetBy": {"id": "00000000-0000-0000-0000-000000000000"}}),
+    ] {
+        c.update_pull_request("Project", "Repo", 42, &body).unwrap();
+    }
+    assert_eq!(c.transport.count(), 2);
+}
+
+#[test]
 fn set_pull_request_vote_sends_vote_and_optional_is_required() {
     let m = Mock::new(|r, index| {
         assert_eq!(r.method, "PUT");

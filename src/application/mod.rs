@@ -59,6 +59,7 @@ impl Application {
                 force,
                 work_items,
                 tags,
+                auto_complete,
                 profile,
             } => self.pr_create(
                 source.as_deref(),
@@ -70,6 +71,7 @@ impl Application {
                 force,
                 &work_items,
                 tags.as_deref(),
+                auto_complete.as_ref(),
                 profile.as_deref(),
             )?,
             CliCommand::PrUpdate {
@@ -108,6 +110,11 @@ impl Application {
                 delete_source_branch,
                 profile.as_deref(),
             )?,
+            CliCommand::PrAutoComplete {
+                target,
+                options,
+                profile,
+            } => self.pr_auto_complete(target, options.as_ref(), profile.as_deref())?,
             CliCommand::PrShow { target, profile } => self.pr_show(target, profile.as_deref())?,
             CliCommand::PrOpen { target, profile } => self.pr_open(target, profile.as_deref())?,
             CliCommand::PrThreads { target, profile } => {

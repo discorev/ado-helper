@@ -60,6 +60,9 @@ ado pr threads https://dev.azure.com/ORG/PROJECT/_git/REPO/pullrequest/123
 ado pr vote 123 --vote approve
 ado pr update 124 --target main
 ado pr complete 123 --merge-strategy squash --delete-source-branch
+ado pr create --title "Add search" --work-item 456 --auto-complete --merge-strategy squash
+ado pr auto-complete 123
+ado pr auto-complete 123 --clear
 ado pr thread-status 123 --thread-id 456 --status fixed
 ado pr changes 123 --iteration 4
 ado pr clone 123
@@ -70,11 +73,15 @@ ado pr diff 123 --directory ~/Developer/ado-reviews/custom
 
 `pr create` derives the organisation, project and repository from the current Azure Git remote. The source defaults to the current branch and the target defaults to the repository's default branch. The source must already exist on the remote, and when it is the current branch its remote tip must equal local `HEAD`; `ado` never pushes. Repeat `--reviewer` and `--work-item` to add more than one. A reviewer already on the PR is left unchanged, keeping any vote and required flag; `--force` (requires `--reviewer`) re-adds every listed reviewer with vote 0 instead. The final readback confirms each requested reviewer is present. `--tags` is a comma-separated PR-label list.
 
+`--merge-strategy`, `--delete-source-branch`, and `--keep-source-branch` are only accepted together with `--auto-complete`. Auto-complete is set last, after the new PR's reviewers and labels are created and confirmed present, so a failed reviewer or label follow-up never leaves auto-complete set on an incomplete pull request. If setting auto-complete fails, the PR is still printed and the command exits non-zero, saying auto-complete was not set; the PR itself was created successfully.
+
 `pr update` accepts the same URL, number or current-branch target resolution as other PR commands and requires at least one field option. Use `--draft` or `--ready` to change draft state, `--status active|abandoned` to change status, and repeat `--add-reviewer` as needed. Reviewers accept an email, unique name or identity GUID; anything other than a GUID is resolved through the organisation's identity service and must match exactly one identity. A reviewer already on the PR is left unchanged, keeping any vote and required flag; `--force` (requires `--add-reviewer`) re-adds every listed reviewer with vote 0, resetting both. The final readback confirms each requested reviewer is present. Supplying `--tags` replaces the complete PR-label set; use an empty value to clear it. `--target BRANCH` retargets the PR (for example after the PR it was stacked on has merged). It reads the current target first and does nothing if the PR already targets that branch, because Azure DevOps returns 400 for a same-target retarget. After a retarget it sends `mergeStatus: queued` to make Azure DevOps recompute the preview merge against the new target; check `mergeStatus` with `ado pr show` before completing.
 
 Repeat `--add-required-reviewer` to add a reviewer as required, or to switch an existing optional reviewer to required; it accepts the same identity forms as `--add-reviewer`. It sends the reviewer's current vote back unchanged, so it never resets a vote already cast, and re-reads the PR afterwards to confirm `isRequired: true` and the unchanged vote. A reviewer may not be passed to both `--add-reviewer` and `--add-required-reviewer`.
 
 `pr complete` completes the PR using `--merge-strategy no-fast-forward|squash|rebase|rebase-merge` (default `no-fast-forward`). It keeps the source branch unless `--delete-source-branch` is given. It refuses a draft PR, a PR that is not active, and a PR whose `mergeStatus` is not `succeeded`. It pins the merge to the PR's current source commit (`lastMergeSourceCommit`), so a push after you looked is rejected rather than merged. Azure DevOps may finish the merge asynchronously; confirm with `ado pr show`.
+
+`pr auto-complete` sets auto-complete as the authenticated user, so Azure DevOps completes the PR itself once policies pass, instead of completing it immediately like `pr complete`. `--merge-strategy` is case-insensitive and also accepts the hyphenated `pr complete` forms (default `noFastForward`). Unlike `pr complete`, it deletes the source branch by default; pass `--keep-source-branch` to keep it. Other existing completion options, such as work-item transition and the merge commit message, are sent back unchanged so they are not reset. `--clear` cancels auto-complete and cannot be combined with the other options. Either way, it reads the PR back afterwards and confirms the change took effect.
 
 `pr vote` sets the authenticated user's vote: `--vote approve` (10), `approve-with-suggestions` (5), `reset` (0), `wait` (-5), or `reject` (-10). It reads the current reviewer entry, if any, and sends `isRequired` back unchanged so voting never drops a required-reviewer flag. `pr thread-status` sets a thread's resolution with `--thread-id N --status active|fixed|wontfix|closed|bydesign|pending`; get thread IDs from `ado pr threads`.
 
@@ -148,6 +155,7 @@ The JSON output contracts for pull-request mutations and queries are:
 - `pr query`: an array of `{id, title, status, isDraft, creator, source, target, reviewers, url}`. `creator` and each reviewer's `identity` use the unique name, falling back to display name or `null`; reviewer entries also include `vote`.
 - `pr create` and `pr update`: `{id, url, fields}`, where `fields` is Azure DevOps' complete pull-request object.
 - `pr complete`: Azure DevOps' complete pull-request object as returned by the update, which may still show `status: active` while the merge finishes.
+- `pr auto-complete`: Azure DevOps' complete pull-request object, read back after the change to confirm it took effect.
 - `pr vote`: Azure DevOps' complete reviewer object (`IdentityRefWithVote`), including the resulting `vote` and `isRequired`.
 - `pr thread-status`: Azure DevOps' complete thread object, including the resulting `status`.
 - `pr comment --thread-id`: Azure DevOps' complete comment object.

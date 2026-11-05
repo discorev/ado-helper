@@ -812,15 +812,16 @@ fn set_auto_complete(
     options: Option<&AutoCompleteOptions>,
 ) -> Result<Value> {
     let body = auto_complete_body(current_pull_request, identity_id, options);
+    // A failed PATCH may still have been applied (for example a timeout), so every failure is
+    // reported as unconfirmed rather than as unchanged.
     client
         .update_pull_request(project, repository, id, &body)
-        .map_err(|Error(reason)| Error(format!("Auto-complete was NOT changed: {reason}")))?;
-    client
-        .pull_request(id)
+        .and_then(|_| client.pull_request(id))
         .and_then(|readback| validate_auto_complete(&readback, identity_id, options).map(|()| readback))
         .map_err(|Error(reason)| {
             Error(format!(
-                "The auto-complete request was sent, but the result could not be confirmed: {reason}"
+                "Auto-complete was not confirmed: {}. The request may have reached Azure DevOps; check with 'ado pr show' before relying on it.",
+                reason.trim_end_matches('.')
             ))
         })
 }

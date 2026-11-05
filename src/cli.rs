@@ -765,12 +765,11 @@ fn parse_pr_complete(args: &[String]) -> Result<CliCommand> {
 /// Normalises a case-insensitive merge-strategy value (accepting the hyphenated forms used by
 /// `pr complete`, for consistency) into the Azure DevOps API's `mergeStrategy` value.
 fn normalize_merge_strategy(value: &str) -> Result<String> {
-    let normalized = value.to_ascii_lowercase().replace('-', "");
-    match normalized.as_str() {
-        "nofastforward" => Ok("noFastForward".into()),
+    match value.to_ascii_lowercase().as_str() {
+        "nofastforward" | "no-fast-forward" => Ok("noFastForward".into()),
         "squash" => Ok("squash".into()),
         "rebase" => Ok("rebase".into()),
-        "rebasemerge" => Ok("rebaseMerge".into()),
+        "rebasemerge" | "rebase-merge" => Ok("rebaseMerge".into()),
         _ => Err(Error(
             "--merge-strategy must be 'noFastForward', 'squash', 'rebase', or 'rebaseMerge'."
                 .into(),

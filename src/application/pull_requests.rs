@@ -768,13 +768,15 @@ fn validate_auto_complete(
                     options.merge_strategy
                 )));
             }
+            // Azure DevOps may omit a false boolean from the response, so absent means false.
             let actual_delete = pull_request
                 .pointer("/completionOptions/deleteSourceBranch")
-                .and_then(Value::as_bool);
-            if actual_delete != Some(options.delete_source_branch) {
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if actual_delete != options.delete_source_branch {
                 return Err(Error(format!(
-                    "completionOptions.deleteSourceBranch was '{:?}', not '{}'.",
-                    actual_delete, options.delete_source_branch
+                    "completionOptions.deleteSourceBranch was '{actual_delete}', not '{}'.",
+                    options.delete_source_branch
                 )));
             }
             Ok(())
@@ -810,14 +812,17 @@ fn set_auto_complete(
     options: Option<&AutoCompleteOptions>,
 ) -> Result<Value> {
     let body = auto_complete_body(current_pull_request, identity_id, options);
-    client.update_pull_request(project, repository, id, &body)?;
-    let readback = client.pull_request(id)?;
-    validate_auto_complete(&readback, identity_id, options).map_err(|Error(reason)| {
-        Error(format!(
-            "The auto-complete request was sent, but verification failed: {reason}"
-        ))
-    })?;
-    Ok(readback)
+    client
+        .update_pull_request(project, repository, id, &body)
+        .map_err(|Error(reason)| Error(format!("Auto-complete was NOT changed: {reason}")))?;
+    client
+        .pull_request(id)
+        .and_then(|readback| validate_auto_complete(&readback, identity_id, options).map(|()| readback))
+        .map_err(|Error(reason)| {
+            Error(format!(
+                "The auto-complete request was sent, but the result could not be confirmed: {reason}"
+            ))
+        })
 }
 
 fn thread_status_value(status: &str) -> &'static str {
@@ -1322,6 +1327,16 @@ mod tests {
             "completionOptions": {"mergeStrategy": "squash", "deleteSourceBranch": false},
         });
         assert!(validate_auto_complete(&wrong_delete, "id-1", Some(&options)).is_err());
+        let keep = AutoCompleteOptions {
+            delete_source_branch: false,
+            ..options.clone()
+        };
+        let omitted_false = json!({
+            "autoCompleteSetBy": {"id": "id-1"},
+            "completionOptions": {"mergeStrategy": "squash"},
+        });
+        assert!(validate_auto_complete(&omitted_false, "id-1", Some(&keep)).is_ok());
+        assert!(validate_auto_complete(&omitted_false, "id-1", Some(&options)).is_err());
         let missing_set_by = json!({
             "completionOptions": {"mergeStrategy": "squash", "deleteSourceBranch": true},
         });

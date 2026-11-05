@@ -204,15 +204,15 @@ impl Application {
                 &context.remote.repository,
             )?),
             Err(error) => {
-                write_json(&show_pull_request(
+                // Print the created PR, but never let a print failure hide the auto-complete error.
+                let _ = show_pull_request(
                     &final_pull_request,
                     &organization,
                     &context.remote.project,
                     &context.remote.repository,
-                )?)?;
-                Err(Error(format!(
-                    "Pull request {id} was created, but auto-complete was NOT set: {error}"
-                )))
+                )
+                .and_then(|shown| write_json(&shown));
+                Err(Error(format!("Pull request {id} was created. {error}")))
             }
         }
     }

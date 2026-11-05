@@ -46,6 +46,8 @@ Replace the placeholders with the organisation name from each ADO URL; one profi
 
 Profile metadata is stored in `~/.config/ado/profiles.json`; PATs are stored only in the macOS login Keychain or Linux Secret Service. On macOS, the native executable is trusted for its own items; other executables remain subject to Keychain approval. Install before adding profiles. Rebuilding or moving the executable can require renewed Keychain approval on macOS.
 
+`ado help` prints the full usage. Add `--help` or `-h` after a group or command (for example `ado pr auto-complete --help` or `ado pr --help`) to print only its usage; the command itself is not run.
+
 Review commands accept a full Azure DevOps PR URL, a PR number, or no target. A number uses `--profile NAME` when given and otherwise derives the organization from the current Azure Git remote. An omitted target finds the PR for the current branch. Examples:
 
 ```sh

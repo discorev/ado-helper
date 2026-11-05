@@ -20,6 +20,11 @@ fn run() -> Result<()> {
                 .map_err(|_| Error("Command-line arguments must be valid UTF-8.".into()))
         })
         .collect::<Result<_>>()?;
+    // Checked before parsing so `--help` never runs the command it follows.
+    if let Some(help) = command_help(&args) {
+        println!("{help}");
+        return Ok(());
+    }
     let command = ado_core::cli::parse(&args)?;
     if command == CliCommand::Help {
         println!("{HELP}");
@@ -80,3 +85,60 @@ const HELP: &str = "Usage:
 TARGET is an Azure DevOps PR URL or positive PR number. Omit it where allowed to use the current branch.
 Work-item commands derive the project from the current Azure Git remote unless --project is supplied.
 Command data is written as JSON; open commands print the URL before launching it.";
+
+/// Usage for `ado GROUP [COMMAND] ... --help`: the matching HELP entries plus its notes.
+/// Returns None for an unknown group or command so the parser reports it as usual.
+fn command_help(args: &[String]) -> Option<String> {
+    let at = args
+        .iter()
+        .position(|arg| arg == "--help" || arg == "-h")
+        .filter(|&at| at > 0)?;
+    let prefix = format!("  ado {}", args[..at.min(2)].join(" "));
+    let (usage, notes) = HELP.split_once("\n\n")?;
+    let mut entries = Vec::new();
+    let mut matching = false;
+    for line in usage.lines().skip(1) {
+        if line.starts_with("  ado ") {
+            matching = line
+                .strip_prefix(&prefix)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '));
+        }
+        if matching {
+            entries.push(line);
+        }
+    }
+    (!entries.is_empty()).then(|| format!("Usage:\n{}\n\n{notes}", entries.join("\n")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::command_help;
+
+    fn help(args: &[&str]) -> Option<String> {
+        command_help(&args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn command_help_shows_only_the_matching_entries() {
+        let text = help(&["pr", "auto-complete", "62039", "--help"]).unwrap();
+        assert!(text.starts_with("Usage:\n  ado pr auto-complete [TARGET] [--merge-strategy"));
+        assert!(text.contains("      [--delete-source-branch | --keep-source-branch]"));
+        assert!(text.contains("  ado pr auto-complete [TARGET] --clear [--profile NAME]"));
+        assert!(text.contains("TARGET is an Azure DevOps PR URL"));
+        assert!(!text.contains("ado pr complete"));
+        let comment = help(&["pr", "comment", "-h"]).unwrap();
+        assert_eq!(comment.matches("  ado pr comment ").count(), 3);
+        assert!(!comment.contains("edit-comment"));
+        let wi = help(&["wi", "comment", "-h"]).unwrap();
+        assert!(!wi.contains("ado wi comments"));
+    }
+
+    #[test]
+    fn group_help_lists_the_group_and_unknown_commands_fall_through() {
+        let group = help(&["pr", "--help"]).unwrap();
+        assert!(group.contains("ado pr create") && !group.contains("ado wi"));
+        assert_eq!(help(&["pr", "nope", "--help"]), None);
+        assert_eq!(help(&["--help"]), None);
+        assert_eq!(help(&["pr", "show", "1"]), None);
+    }
+}

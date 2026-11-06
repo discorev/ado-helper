@@ -1,4 +1,4 @@
-use super::{AdoClient, HttpTransport, invalid_response, pagination};
+use super::{AdoClient, HttpTransport, integer, invalid_response, pagination};
 use crate::{Error, Result, git::validate_ref};
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -301,6 +301,44 @@ impl<T: HttpTransport> AdoClient<T> {
             .and_then(Value::as_array)
             .cloned()
             .ok_or_else(invalid_response)
+    }
+
+    /// IDs of the work items linked to the pull request. Azure DevOps returns them as strings.
+    pub fn pull_request_work_items(
+        &self,
+        project: &str,
+        repository: &str,
+        id: i64,
+    ) -> Result<Vec<i64>> {
+        self.validate_resource(project, repository, id)?;
+        let object = self.get_object(
+            &[
+                project,
+                "_apis",
+                "git",
+                "repositories",
+                repository,
+                "pullrequests",
+                &id.to_string(),
+                "workitems",
+            ],
+            &[],
+            true,
+        )?;
+        object
+            .get("value")
+            .and_then(Value::as_array)
+            .ok_or_else(invalid_response)?
+            .iter()
+            .map(|item| {
+                let id = item.get("id").ok_or_else(invalid_response)?;
+                id.as_str()
+                    .and_then(|id| id.parse::<i64>().ok())
+                    .or_else(|| integer(id))
+                    .filter(|id| *id > 0)
+                    .ok_or_else(invalid_response)
+            })
+            .collect()
     }
 
     pub fn add_pull_request_label(

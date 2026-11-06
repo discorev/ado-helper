@@ -97,6 +97,16 @@ impl<T: HttpTransport> AdoClient<T> {
         )
     }
 
+    /// Like `work_item`, but asks Azure DevOps to include the `relations` array.
+    pub fn work_item_with_relations(&self, project: &str, id: i64) -> Result<Value> {
+        self.validate_work_item(project, id)?;
+        self.get_object(
+            &[project, "_apis", "wit", "workitems", &id.to_string()],
+            &[("$expand", "relations")],
+            true,
+        )
+    }
+
     pub fn work_item_comments(&self, project: &str, id: i64) -> Result<Vec<Value>> {
         self.validate_work_item(project, id)?;
         let path = [

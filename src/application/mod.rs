@@ -85,6 +85,7 @@ impl Application {
                 force,
                 tags,
                 target_branch,
+                add_work_items,
                 profile,
             } => self.pr_update(
                 target,
@@ -97,6 +98,7 @@ impl Application {
                 force,
                 tags.as_deref(),
                 target_branch.as_deref(),
+                &add_work_items,
                 profile.as_deref(),
             )?,
             CliCommand::PrComplete {

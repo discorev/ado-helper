@@ -69,6 +69,7 @@ pub enum CliCommand {
         force: bool,
         tags: Option<String>,
         target_branch: Option<String>,
+        add_work_items: Vec<i64>,
         profile: Option<String>,
     },
     PrComplete {
@@ -646,7 +647,11 @@ fn parse_pr_update(args: &[String]) -> Result<CliCommand> {
             "--target",
             "--profile",
         ],
-        &["--add-reviewer", "--add-required-reviewer"],
+        &[
+            "--add-reviewer",
+            "--add-required-reviewer",
+            "--add-work-item",
+        ],
         &["--draft", "--ready", "--force"],
     )?;
     if values.flags.contains("--draft") && values.flags.contains("--ready") {
@@ -707,6 +712,18 @@ fn parse_pr_update(args: &[String]) -> Result<CliCommand> {
     {
         return Err(Error("--target must not be empty.".into()));
     }
+    // Repeated IDs are collapsed so a duplicate never triggers Azure's 400 for a second identical relation.
+    let mut add_work_items: Vec<i64> = Vec::new();
+    for value in values.repeated("--add-work-item") {
+        let id = value
+            .parse::<i64>()
+            .ok()
+            .filter(|id| *id > 0)
+            .ok_or_else(|| Error("--add-work-item must be a positive integer.".into()))?;
+        if !add_work_items.contains(&id) {
+            add_work_items.push(id);
+        }
+    }
     if title.is_none()
         && description_file.is_none()
         && status.is_none()
@@ -715,6 +732,7 @@ fn parse_pr_update(args: &[String]) -> Result<CliCommand> {
         && add_required_reviewers.is_empty()
         && tags.is_none()
         && target_branch.is_none()
+        && add_work_items.is_empty()
     {
         return Err(Error(
             "pr update requires at least one field option.".into(),
@@ -731,6 +749,7 @@ fn parse_pr_update(args: &[String]) -> Result<CliCommand> {
         force,
         tags,
         target_branch,
+        add_work_items,
         profile: values.take("--profile"),
     })
 }

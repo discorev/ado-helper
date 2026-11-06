@@ -1,5 +1,5 @@
 use super::*;
-use ado_core::ado_client::reviewer_entry;
+use ado_core::ado_client::{HttpTransport, reviewer_entry};
 
 impl Application {
     #[allow(clippy::too_many_arguments)]
@@ -230,6 +230,7 @@ impl Application {
         force: bool,
         tags: Option<&str>,
         target_branch: Option<&str>,
+        add_work_items: &[i64],
         profile_name: Option<&str>,
     ) -> Result<()> {
         let resolved = self.resolve(target, profile_name)?;
@@ -303,6 +304,15 @@ impl Application {
                 &repository,
                 resolved.locator.id,
                 &parse_labels(tags),
+            )?;
+        }
+        if !add_work_items.is_empty() {
+            link_work_items(
+                &resolved.client,
+                &repository,
+                &resolved.pull_request,
+                resolved.locator.id,
+                add_work_items,
             )?;
         }
         let updated = resolved.client.pull_request(resolved.locator.id)?;
@@ -422,6 +432,116 @@ fn replace_labels(
         }
     }
     Ok(())
+}
+
+/// Links each work item to the pull request from the work item side, because Azure DevOps
+/// ignores `workItemRefs` on a pull request PATCH. Items that already carry the link are left
+/// unchanged, since Azure returns 400 for a duplicate relation. The PR's linked work items are
+/// read back afterwards to confirm every requested ID is present.
+fn link_work_items<T: HttpTransport>(
+    client: &AdoClient<T>,
+    repository: &RepositoryIdentity,
+    pull_request: &Value,
+    id: i64,
+    work_items: &[i64],
+) -> Result<()> {
+    let artifact = pull_request_artifact_url(pull_request, id)?;
+    let mut linked: Vec<i64> = Vec::new();
+    for work_item in work_items {
+        let attempt = client
+            .work_item_with_relations(&repository.project, *work_item)
+            .and_then(|item| {
+                if has_artifact_link(&item, &artifact) {
+                    return Ok(());
+                }
+                client
+                    .update_work_item(
+                        &repository.project,
+                        *work_item,
+                        &json!([{
+                            "op": "add",
+                            "path": "/relations/-",
+                            "value": {
+                                "rel": "ArtifactLink",
+                                "url": artifact,
+                                "attributes": {"name": "Pull Request"},
+                            },
+                        }]),
+                    )
+                    .map(|_| ())
+            });
+        if let Err(Error(error)) = attempt {
+            let already = if linked.is_empty() {
+                " No work items were linked.".to_owned()
+            } else {
+                format!(" Already linked: {}.", join_ids(&linked))
+            };
+            return Err(Error(format!(
+                "Pull request {id} was updated, but work item {work_item} could not be linked: {error}{already}"
+            )));
+        }
+        linked.push(*work_item);
+    }
+    let present = client
+        .pull_request_work_items(&repository.project, &repository.repository, id)
+        .map_err(|Error(error)| {
+            Error(format!(
+                "Pull request {id} was updated, but the linked work items readback failed: {error}"
+            ))
+        })?;
+    for work_item in work_items {
+        if !present.contains(work_item) {
+            return Err(Error(format!(
+                "Pull request {id} was updated, but work item {work_item} is missing from the linked work items readback."
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The `vstfs:///Git/PullRequestId/{project}%2F{repository}%2F{id}` artifact URI Azure DevOps
+/// uses for a pull request in work item relations. Both GUIDs come from the resolved PR.
+fn pull_request_artifact_url(pull_request: &Value, id: i64) -> Result<String> {
+    let guid = |pointer: &str| {
+        pull_request
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+    };
+    let (project_id, repository_id) = guid("/repository/project/id")
+        .zip(guid("/repository/id"))
+        .ok_or_else(|| {
+            Error(
+                "Azure DevOps pull request response is missing the project or repository ID needed to link work items."
+                    .into(),
+            )
+        })?;
+    Ok(format!(
+        "vstfs:///Git/PullRequestId/{project_id}%2F{repository_id}%2F{id}"
+    ))
+}
+
+/// Azure may return GUIDs in either case and `%2F` as `%2f`, so the match is case-insensitive.
+fn has_artifact_link(work_item: &Value, artifact: &str) -> bool {
+    work_item
+        .get("relations")
+        .and_then(Value::as_array)
+        .is_some_and(|relations| {
+            relations.iter().any(|relation| {
+                relation.get("rel").and_then(Value::as_str) == Some("ArtifactLink")
+                    && relation
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .is_some_and(|url| url.eq_ignore_ascii_case(artifact))
+            })
+        })
+}
+
+fn join_ids(ids: &[i64]) -> String {
+    ids.iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub(super) fn validate_required_reviewers(
@@ -550,4 +670,194 @@ pub(super) fn pull_request_url(
 
 fn invalid_pull_request_response() -> Error {
     Error("Azure DevOps returned a pull request response in an unexpected format.".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ado_core::ado_client::{HttpRequest, HttpResponse};
+    use std::sync::Mutex;
+
+    const ARTIFACT: &str = "vstfs:///Git/PullRequestId/PROJ-GUID%2FREPO-GUID%2F42";
+
+    /// Replays canned responses in order and records every request it sees.
+    struct Script {
+        responses: Mutex<Vec<(u16, Value)>>,
+        requests: Mutex<Vec<HttpRequest>>,
+    }
+
+    impl Script {
+        fn new(responses: Vec<(u16, Value)>) -> Self {
+            Self {
+                responses: Mutex::new(responses),
+                requests: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl HttpTransport for Script {
+        fn send(&self, request: &HttpRequest) -> Result<HttpResponse> {
+            self.requests.lock().unwrap().push(request.clone());
+            let mut responses = self.responses.lock().unwrap();
+            assert!(!responses.is_empty(), "unexpected request {}", request.url);
+            let (status, body) = responses.remove(0);
+            Ok(HttpResponse {
+                status,
+                url: request.url.clone(),
+                headers: Default::default(),
+                body: serde_json::to_vec(&body).unwrap(),
+            })
+        }
+    }
+
+    fn scripted(script: Script) -> AdoClient<Script> {
+        AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", script)
+    }
+
+    fn repository() -> RepositoryIdentity {
+        RepositoryIdentity {
+            project: "Project".into(),
+            repository: "Repo".into(),
+            project_aliases: vec![],
+            repository_aliases: vec![],
+        }
+    }
+
+    fn pull_request() -> Value {
+        json!({"pullRequestId": 42, "repository": {"id": "REPO-GUID", "name": "Repo", "project": {"id": "PROJ-GUID", "name": "Project"}}})
+    }
+
+    fn requests(client: &AdoClient<Script>) -> Vec<(String, String, Option<Value>)> {
+        client
+            .transport
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|request| {
+                (
+                    request.method.clone(),
+                    format!(
+                        "{}?{}",
+                        request.url.path(),
+                        request.url.query().unwrap_or("")
+                    ),
+                    request
+                        .body
+                        .as_ref()
+                        .map(|body| serde_json::from_slice(body).unwrap()),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn link_work_items_skips_existing_links_patches_the_rest_and_reads_back() {
+        let client = scripted(Script::new(vec![
+            // 12 already carries the link, in Azure's lowercase form.
+            (
+                200,
+                json!({"id": 12, "relations": [{"rel": "ArtifactLink", "url": ARTIFACT.to_ascii_lowercase()}]}),
+            ),
+            // 13 has an unrelated relation only.
+            (
+                200,
+                json!({"id": 13, "relations": [{"rel": "System.LinkTypes.Hierarchy-Reverse", "url": "https://dev.azure.com/acme/_apis/wit/workItems/1"}]}),
+            ),
+            (200, json!({"id": 13, "relations": []})),
+            (200, json!({"value": [{"id": "12"}, {"id": "13"}]})),
+        ]));
+        link_work_items(&client, &repository(), &pull_request(), 42, &[12, 13]).unwrap();
+        let seen = requests(&client);
+        assert_eq!(seen.len(), 4);
+        assert_eq!(
+            (seen[0].0.as_str(), seen[0].1.as_str()),
+            (
+                "GET",
+                "/acme/Project/_apis/wit/workitems/12?%24expand=relations&api-version=7.1"
+            )
+        );
+        assert_eq!(seen[1].0, "GET");
+        assert_eq!(seen[2].0, "PATCH");
+        assert_eq!(
+            seen[2].1,
+            "/acme/Project/_apis/wit/workitems/13?api-version=7.1"
+        );
+        assert_eq!(
+            seen[2].2,
+            Some(json!([{
+                "op": "add",
+                "path": "/relations/-",
+                "value": {"rel": "ArtifactLink", "url": ARTIFACT, "attributes": {"name": "Pull Request"}}
+            }]))
+        );
+        assert_eq!(
+            (seen[3].0.as_str(), seen[3].1.as_str()),
+            (
+                "GET",
+                "/acme/Project/_apis/git/repositories/Repo/pullrequests/42/workitems?api-version=7.1"
+            )
+        );
+    }
+
+    #[test]
+    fn link_work_items_reports_already_linked_ids_on_partial_failure() {
+        let client = scripted(Script::new(vec![
+            (200, json!({"id": 12, "relations": []})),
+            (200, json!({"id": 12})),
+            (200, json!({"id": 13, "relations": []})),
+            (400, json!({"message": "Relation already exists."})),
+        ]));
+        let error = link_work_items(&client, &repository(), &pull_request(), 42, &[12, 13])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error
+                .starts_with("Pull request 42 was updated, but work item 13 could not be linked: "),
+            "{error}"
+        );
+        assert!(error.contains("Relation already exists."), "{error}");
+        assert!(error.ends_with(" Already linked: 12."), "{error}");
+
+        let client = scripted(Script::new(vec![(404, json!({"message": "Not found."}))]));
+        let error = link_work_items(&client, &repository(), &pull_request(), 42, &[12])
+            .unwrap_err()
+            .to_string();
+        assert!(error.ends_with(" No work items were linked."), "{error}");
+    }
+
+    #[test]
+    fn link_work_items_fails_when_readback_omits_a_requested_id() {
+        let client = scripted(Script::new(vec![
+            (200, json!({"id": 12, "relations": []})),
+            (200, json!({"id": 12})),
+            (200, json!({"value": [{"id": "7"}]})),
+        ]));
+        assert_eq!(
+            link_work_items(&client, &repository(), &pull_request(), 42, &[12])
+                .unwrap_err()
+                .to_string(),
+            "Pull request 42 was updated, but work item 12 is missing from the linked work items readback."
+        );
+    }
+
+    #[test]
+    fn artifact_url_requires_project_and_repository_guids() {
+        assert_eq!(
+            pull_request_artifact_url(&pull_request(), 42).unwrap(),
+            ARTIFACT
+        );
+        for pointer in ["/repository/project/id", "/repository/id"] {
+            let mut pull_request = pull_request();
+            *pull_request.pointer_mut(pointer).unwrap() = Value::Null;
+            let client = scripted(Script::new(vec![]));
+            assert_eq!(
+                link_work_items(&client, &repository(), &pull_request, 42, &[12])
+                    .unwrap_err()
+                    .to_string(),
+                "Azure DevOps pull request response is missing the project or repository ID needed to link work items."
+            );
+            assert!(client.transport.requests.lock().unwrap().is_empty());
+        }
+    }
 }

@@ -1151,6 +1151,93 @@ fn update_pull_request_sends_completion_and_retarget_bodies() {
     assert_eq!(c.transport.count(), 3);
 }
 #[test]
+fn pull_request_work_items_and_relation_link_build_expected_requests() {
+    let artifact = "vstfs:///Git/PullRequestId/proj-guid%2Frepo-guid%2F42";
+    let m = Mock::new(move |r, index| match index {
+        0 => {
+            assert_eq!(r.method, "GET");
+            assert_eq!(
+                r.url.path(),
+                "/acme/Project/_apis/git/repositories/Repo/pullrequests/42/workitems"
+            );
+            assert_eq!(r.url.query(), Some("api-version=7.1"));
+            assert!(r.body.is_none());
+            Ok(response(
+                r,
+                200,
+                &json!({"count": 2, "value": [
+                    {"id": "12", "url": "https://dev.azure.com/acme/_apis/wit/workItems/12"},
+                    {"id": "13", "url": "https://dev.azure.com/acme/_apis/wit/workItems/13"}
+                ]}),
+                &[],
+            ))
+        }
+        1 => {
+            assert_eq!(r.method, "GET");
+            assert_eq!(r.url.path(), "/acme/Project/_apis/wit/workitems/12");
+            let q = query(r);
+            assert_eq!(q["$expand"], "relations");
+            assert_eq!(q["api-version"], "7.1");
+            Ok(response(
+                r,
+                200,
+                &json!({"id": 12, "relations": [{"rel": "ArtifactLink", "url": artifact}]}),
+                &[],
+            ))
+        }
+        2 => {
+            assert_eq!(r.method, "PATCH");
+            assert_eq!(r.url.path(), "/acme/Project/_apis/wit/workitems/13");
+            assert_eq!(query(r)["api-version"], "7.1");
+            assert_eq!(r.headers["Content-Type"], "application/json-patch+json");
+            let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+            assert_eq!(
+                body,
+                json!([{
+                    "op": "add",
+                    "path": "/relations/-",
+                    "value": {
+                        "rel": "ArtifactLink",
+                        "url": artifact,
+                        "attributes": {"name": "Pull Request"}
+                    }
+                }])
+            );
+            Ok(response(r, 200, &json!({"id": 13, "relations": []}), &[]))
+        }
+        _ => panic!("unexpected request"),
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert_eq!(
+        c.pull_request_work_items("Project", "Repo", 42).unwrap(),
+        vec![12, 13]
+    );
+    let item = c.work_item_with_relations("Project", 12).unwrap();
+    assert_eq!(item["relations"][0]["url"], artifact);
+    c.update_work_item(
+        "Project",
+        13,
+        &json!([{
+            "op": "add",
+            "path": "/relations/-",
+            "value": {"rel": "ArtifactLink", "url": artifact, "attributes": {"name": "Pull Request"}}
+        }]),
+    )
+    .unwrap();
+    assert_eq!(c.transport.count(), 3);
+}
+#[test]
+fn pull_request_work_items_rejects_malformed_ids() {
+    for value in [
+        json!({"value": [{"url": "x"}]}),
+        json!({"value": [{"id": "zero"}]}),
+    ] {
+        let m = Mock::new(move |r, _| Ok(response(r, 200, &value, &[])));
+        let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+        assert!(c.pull_request_work_items("Project", "Repo", 42).is_err());
+    }
+}
+#[test]
 fn set_pull_request_vote_sends_vote_and_optional_is_required() {
     let m = Mock::new(|r, index| {
         assert_eq!(r.method, "PUT");

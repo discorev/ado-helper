@@ -725,6 +725,7 @@ fn parses_pr_update_and_requires_a_field() {
             force: false,
             tags: Some("api,ready".into()),
             target_branch: None,
+            add_work_items: vec![],
             profile: Some("work".into()),
         }
     );
@@ -741,6 +742,7 @@ fn parses_pr_update_and_requires_a_field() {
             force: false,
             tags: None,
             target_branch: None,
+            add_work_items: vec![],
             profile: None,
         }
     );
@@ -757,6 +759,7 @@ fn parses_pr_update_and_requires_a_field() {
             force: false,
             tags: None,
             target_branch: Some("main".into()),
+            add_work_items: vec![],
             profile: None,
         }
     );
@@ -780,6 +783,7 @@ fn parses_pr_update_and_requires_a_field() {
             force: false,
             tags: None,
             target_branch: None,
+            add_work_items: vec![],
             profile: None,
         }
     );
@@ -800,6 +804,46 @@ fn parses_pr_update_and_requires_a_field() {
         ]),
     ] {
         assert!(cli::parse(&args).is_err());
+    }
+}
+
+#[test]
+fn parses_pr_update_add_work_item_dedupes_and_rejects_invalid_ids() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "pr",
+            "update",
+            "42",
+            "--add-work-item",
+            "13",
+            "--add-work-item",
+            "12",
+            "--add-work-item",
+            "13",
+        ]))
+        .unwrap(),
+        CliCommand::PrUpdate {
+            target: PullRequestTarget::Number(42),
+            title: None,
+            description_file: None,
+            status: None,
+            draft: None,
+            add_reviewers: vec![],
+            add_required_reviewers: vec![],
+            force: false,
+            tags: None,
+            target_branch: None,
+            add_work_items: vec![13, 12],
+            profile: None,
+        }
+    );
+    for id in ["0", "-1", "abc", ""] {
+        assert_eq!(
+            cli::parse(&svec(&["pr", "update", "42", "--add-work-item", id]))
+                .unwrap_err()
+                .to_string(),
+            "--add-work-item must be a positive integer."
+        );
     }
 }
 
@@ -826,6 +870,7 @@ fn parses_pr_update_force_and_rejects_it_without_add_reviewer() {
             force: true,
             tags: None,
             target_branch: None,
+            add_work_items: vec![],
             profile: None,
         }
     );

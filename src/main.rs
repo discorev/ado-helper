@@ -27,7 +27,7 @@ fn run() -> Result<i32> {
     // Checked before parsing so `--help` never runs the command it follows.
     if let Some(help) = command_help(&args) {
         println!("{help}");
-        return Ok(());
+        return Ok(0);
     }
     let command = ado_core::cli::parse(&args)?;
     if command == CliCommand::Help {

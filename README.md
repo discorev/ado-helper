@@ -154,7 +154,7 @@ ado wi update 123 --state Active --tags "auth;investigating"
 ado wi open 123
 ```
 
-`wi query` requires exactly one of `--wiql`, `--wiql-file`, or `--search`; `--top` defaults to 100. Search covers title and description and orders by the most recently changed work items. Description files are sent as-is, including HTML. `wi update` requires at least one field option, and `--tags` replaces the complete tag value. `wi open` and `pr open` print the web URL before launching the platform browser.
+`wi query` requires exactly one of `--wiql`, `--wiql-file`, or `--search`; `--top` defaults to 100. Search covers title and description and orders by the most recently changed work items. Description files are sent as-is, including HTML. `wi update` requires at least one field option, and `--tags` replaces the complete tag value. `--area` and `--iteration` set `System.AreaPath` and `System.IterationPath` on `wi create` and `wi update`; pass the full backslash-separated path, e.g. `--area 'Project\Team'`. `wi create --priority` accepts 1 to 4. `wi open` and `pr open` print the web URL before launching the platform browser.
 
 The JSON output contracts for pull-request mutations and queries are:
 

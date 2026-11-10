@@ -83,9 +83,11 @@ const HELP: &str = "Usage:
   ado wi comments ID [--project NAME] [--profile NAME]
   ado wi comment ID --body-file PATH [--project NAME] [--profile NAME]
   ado wi create --type TYPE --title TEXT [--description-file PATH] [--assign-to USER]
-      [--tags TAGS] [--priority 1-4] [--project NAME] [--profile NAME]
+      [--tags TAGS] [--priority 1-4] [--area PATH] [--iteration PATH]
+      [--project NAME] [--profile NAME]
   ado wi update ID [--state STATE] [--title TEXT] [--assign-to USER] [--tags TAGS]
-      [--description-file PATH] [--project NAME] [--profile NAME]
+      [--description-file PATH] [--area PATH] [--iteration PATH]
+      [--project NAME] [--profile NAME]
   ado wi open ID [--project NAME] [--profile NAME]
 
 TARGET is an Azure DevOps PR URL or positive PR number. Omit it where allowed to use the current branch.

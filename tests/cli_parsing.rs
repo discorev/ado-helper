@@ -1261,7 +1261,11 @@ fn parses_work_item_create_and_requires_type_and_title() {
             "--tags",
             "api;urgent",
             "--priority",
-            "2"
+            "2",
+            "--area",
+            "Web App\\Payments",
+            "--iteration",
+            "Web App\\Sprint 1"
         ]))
         .unwrap(),
         CliCommand::WiCreate {
@@ -1271,6 +1275,8 @@ fn parses_work_item_create_and_requires_type_and_title() {
             assign_to: Some("ada@example.test".into()),
             tags: Some("api;urgent".into()),
             priority: Some(2),
+            area: Some("Web App\\Payments".into()),
+            iteration: Some("Web App\\Sprint 1".into()),
             profile: None,
             project: None,
         }
@@ -1318,6 +1324,32 @@ fn parses_work_item_update_and_requires_a_field() {
             assign_to: Some("ada@example.test".into()),
             tags: Some("one;two".into()),
             description_file: Some("/tmp/description".into()),
+            area: None,
+            iteration: None,
+            profile: None,
+            project: None,
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&[
+            "wi",
+            "update",
+            "12",
+            "--area",
+            "Web App\\Payments",
+            "--iteration",
+            "Web App\\Sprint 1"
+        ]))
+        .unwrap(),
+        CliCommand::WiUpdate {
+            id: 12,
+            state: None,
+            title: None,
+            assign_to: None,
+            tags: None,
+            description_file: None,
+            area: Some("Web App\\Payments".into()),
+            iteration: Some("Web App\\Sprint 1".into()),
             profile: None,
             project: None,
         }

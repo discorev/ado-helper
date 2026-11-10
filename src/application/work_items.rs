@@ -101,6 +101,8 @@ impl Application {
         assign_to: Option<&str>,
         tags: Option<&str>,
         priority: Option<u8>,
+        area: Option<&str>,
+        iteration: Option<&str>,
         profile_name: Option<&str>,
         project: Option<&str>,
     ) -> Result<()> {
@@ -123,6 +125,12 @@ impl Application {
         if let Some(value) = tags {
             add_field(&mut patch, "System.Tags", value);
         }
+        if let Some(value) = area {
+            add_field(&mut patch, "System.AreaPath", value);
+        }
+        if let Some(value) = iteration {
+            add_field(&mut patch, "System.IterationPath", value);
+        }
         let item = self.work_item_client(&scope)?.create_work_item(
             &scope.project,
             work_item_type,
@@ -140,6 +148,8 @@ impl Application {
         assign_to: Option<&str>,
         tags: Option<&str>,
         description_file: Option<&str>,
+        area: Option<&str>,
+        iteration: Option<&str>,
         profile_name: Option<&str>,
         project: Option<&str>,
     ) -> Result<()> {
@@ -159,6 +169,12 @@ impl Application {
         }
         if let Some(path) = description_file {
             add_field(&mut patch, "System.Description", &read_body(path)?);
+        }
+        if let Some(value) = area {
+            add_field(&mut patch, "System.AreaPath", value);
+        }
+        if let Some(value) = iteration {
+            add_field(&mut patch, "System.IterationPath", value);
         }
         let item = self.work_item_client(&scope)?.update_work_item(
             &scope.project,

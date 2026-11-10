@@ -197,6 +197,8 @@ pub enum CliCommand {
         assign_to: Option<String>,
         tags: Option<String>,
         priority: Option<u8>,
+        area: Option<String>,
+        iteration: Option<String>,
         profile: Option<String>,
         project: Option<String>,
     },
@@ -207,6 +209,8 @@ pub enum CliCommand {
         assign_to: Option<String>,
         tags: Option<String>,
         description_file: Option<String>,
+        area: Option<String>,
+        iteration: Option<String>,
         profile: Option<String>,
         project: Option<String>,
     },
@@ -1229,6 +1233,8 @@ fn parse_wi_create(args: &[String]) -> Result<CliCommand> {
             "--assign-to",
             "--tags",
             "--priority",
+            "--area",
+            "--iteration",
             "--profile",
             "--project",
         ],
@@ -1252,6 +1258,8 @@ fn parse_wi_create(args: &[String]) -> Result<CliCommand> {
         assign_to: v.take("--assign-to"),
         tags: v.take("--tags"),
         priority,
+        area: v.take("--area"),
+        iteration: v.take("--iteration"),
         profile: v.take("--profile"),
         project: v.take("--project"),
     })
@@ -1266,6 +1274,8 @@ fn parse_wi_update(args: &[String]) -> Result<CliCommand> {
             "--assign-to",
             "--tags",
             "--description-file",
+            "--area",
+            "--iteration",
             "--profile",
             "--project",
         ],
@@ -1276,11 +1286,15 @@ fn parse_wi_update(args: &[String]) -> Result<CliCommand> {
     let assign_to = v.take("--assign-to");
     let tags = v.take("--tags");
     let description_file = v.take("--description-file");
+    let area = v.take("--area");
+    let iteration = v.take("--iteration");
     if state.is_none()
         && title.is_none()
         && assign_to.is_none()
         && tags.is_none()
         && description_file.is_none()
+        && area.is_none()
+        && iteration.is_none()
     {
         return Err(Error(
             "wi update requires at least one field option.".into(),
@@ -1293,6 +1307,8 @@ fn parse_wi_update(args: &[String]) -> Result<CliCommand> {
         assign_to,
         tags,
         description_file,
+        area,
+        iteration,
         profile: v.take("--profile"),
         project: v.take("--project"),
     })

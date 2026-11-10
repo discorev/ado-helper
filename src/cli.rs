@@ -196,6 +196,7 @@ pub enum CliCommand {
         description_file: Option<String>,
         assign_to: Option<String>,
         tags: Option<String>,
+        priority: Option<u8>,
         profile: Option<String>,
         project: Option<String>,
     },
@@ -1227,6 +1228,7 @@ fn parse_wi_create(args: &[String]) -> Result<CliCommand> {
             "--description-file",
             "--assign-to",
             "--tags",
+            "--priority",
             "--profile",
             "--project",
         ],
@@ -1236,12 +1238,20 @@ fn parse_wi_create(args: &[String]) -> Result<CliCommand> {
             "wi create does not accept a positional argument.".into(),
         ));
     }
+    let priority = match v.take("--priority") {
+        None => None,
+        Some(value) => match value.parse::<u8>() {
+            Ok(n) if (1..=4).contains(&n) => Some(n),
+            _ => return Err(Error("--priority must be 1, 2, 3 or 4.".into())),
+        },
+    };
     Ok(CliCommand::WiCreate {
         work_item_type: v.required("--type")?,
         title: v.required("--title")?,
         description_file: v.take("--description-file"),
         assign_to: v.take("--assign-to"),
         tags: v.take("--tags"),
+        priority,
         profile: v.take("--profile"),
         project: v.take("--project"),
     })

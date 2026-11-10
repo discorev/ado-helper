@@ -83,7 +83,7 @@ const HELP: &str = "Usage:
   ado wi comments ID [--project NAME] [--profile NAME]
   ado wi comment ID --body-file PATH [--project NAME] [--profile NAME]
   ado wi create --type TYPE --title TEXT [--description-file PATH] [--assign-to USER]
-      [--tags TAGS] [--project NAME] [--profile NAME]
+      [--tags TAGS] [--priority 1-4] [--project NAME] [--profile NAME]
   ado wi update ID [--state STATE] [--title TEXT] [--assign-to USER] [--tags TAGS]
       [--description-file PATH] [--project NAME] [--profile NAME]
   ado wi open ID [--project NAME] [--profile NAME]

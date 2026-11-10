@@ -255,6 +255,7 @@ impl Application {
                 description_file,
                 assign_to,
                 tags,
+                priority,
                 profile,
                 project,
             } => self.wi_create(
@@ -263,6 +264,7 @@ impl Application {
                 description_file.as_deref(),
                 assign_to.as_deref(),
                 tags.as_deref(),
+                priority,
                 profile.as_deref(),
                 project.as_deref(),
             )?,

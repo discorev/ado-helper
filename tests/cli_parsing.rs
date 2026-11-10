@@ -1259,7 +1259,9 @@ fn parses_work_item_create_and_requires_type_and_title() {
             "--assign-to",
             "ada@example.test",
             "--tags",
-            "api;urgent"
+            "api;urgent",
+            "--priority",
+            "2"
         ]))
         .unwrap(),
         CliCommand::WiCreate {
@@ -1268,12 +1270,26 @@ fn parses_work_item_create_and_requires_type_and_title() {
             description_file: Some("/tmp/description".into()),
             assign_to: Some("ada@example.test".into()),
             tags: Some("api;urgent".into()),
+            priority: Some(2),
             profile: None,
             project: None,
         }
     );
     assert!(cli::parse(&svec(&["wi", "create", "--title", "Title"])).is_err());
     assert!(cli::parse(&svec(&["wi", "create", "--type", "Bug"])).is_err());
+    assert!(
+        cli::parse(&svec(&[
+            "wi",
+            "create",
+            "--type",
+            "Bug",
+            "--title",
+            "T",
+            "--priority",
+            "5"
+        ]))
+        .is_err()
+    );
 }
 
 #[test]

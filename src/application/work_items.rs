@@ -100,12 +100,20 @@ impl Application {
         description_file: Option<&str>,
         assign_to: Option<&str>,
         tags: Option<&str>,
+        priority: Option<u8>,
         profile_name: Option<&str>,
         project: Option<&str>,
     ) -> Result<()> {
         let scope = self.work_item_scope(profile_name, project)?;
         let mut patch = Vec::new();
         add_field(&mut patch, "System.Title", title);
+        if let Some(value) = priority {
+            add_field(
+                &mut patch,
+                "Microsoft.VSTS.Common.Priority",
+                &value.to_string(),
+            );
+        }
         if let Some(path) = description_file {
             add_field(&mut patch, "System.Description", &read_body(path)?);
         }

@@ -258,6 +258,7 @@ impl Application {
                 priority,
                 area,
                 iteration,
+                fields,
                 profile,
                 project,
             } => self.wi_create(
@@ -269,6 +270,7 @@ impl Application {
                 priority,
                 area.as_deref(),
                 iteration.as_deref(),
+                &fields,
                 profile.as_deref(),
                 project.as_deref(),
             )?,
@@ -281,6 +283,7 @@ impl Application {
                 description_file,
                 area,
                 iteration,
+                fields,
                 profile,
                 project,
             } => self.wi_update(
@@ -292,6 +295,7 @@ impl Application {
                 description_file.as_deref(),
                 area.as_deref(),
                 iteration.as_deref(),
+                &fields,
                 profile.as_deref(),
                 project.as_deref(),
             )?,
@@ -300,6 +304,11 @@ impl Application {
                 profile,
                 project,
             } => self.wi_open(id, profile.as_deref(), project.as_deref())?,
+            CliCommand::WiFields {
+                work_item_type,
+                profile,
+                project,
+            } => self.wi_fields(&work_item_type, profile.as_deref(), project.as_deref())?,
         }
         Ok(0)
     }

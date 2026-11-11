@@ -561,6 +561,48 @@ fn wiql_batches_work_item_reads_and_preserves_query_order() {
 }
 
 #[test]
+fn work_item_type_fields_requests_allowed_values_and_encodes_the_type_name() {
+    let m = Mock::new(|r, _| {
+        assert_eq!(r.method, "GET");
+        assert_eq!(
+            r.url.path(),
+            "/acme/My%20Project/_apis/wit/workitemtypes/User%20Story/fields"
+        );
+        let q = query(r);
+        assert_eq!(q["$expand"], "allowedValues");
+        assert_eq!(q["api-version"], "7.1");
+        Ok(response(
+            r,
+            200,
+            &json!({"value": [
+                {"name": "Severity", "referenceName": "Custom.Severity", "allowedValues": ["High", "Low"]},
+                {"name": "Title", "referenceName": "System.Title", "allowedValues": []},
+            ]}),
+            &[],
+        ))
+    });
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    let fields = c.work_item_type_fields("My Project", "User Story").unwrap();
+    assert_eq!(
+        fields,
+        vec![
+            json!({"name": "Severity", "referenceName": "Custom.Severity", "allowedValues": ["High", "Low"]}),
+            json!({"name": "Title", "referenceName": "System.Title", "allowedValues": []}),
+        ]
+    );
+    assert_eq!(c.transport.count(), 1);
+}
+
+#[test]
+fn work_item_type_fields_validates_input_without_sending() {
+    let m = Mock::new(|_, _| panic!("invalid request must not be sent"));
+    let c = AdoClient::with_transport(Organization::parse("acme").unwrap(), "token", m);
+    assert!(c.work_item_type_fields("", "Bug").is_err());
+    assert!(c.work_item_type_fields("Project", "").is_err());
+    assert_eq!(c.transport.count(), 0);
+}
+
+#[test]
 fn work_item_comments_use_preview_version_and_follow_continuation() {
     let m = Mock::new(|r, index| {
         assert_eq!(

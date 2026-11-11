@@ -1265,7 +1265,11 @@ fn parses_work_item_create_and_requires_type_and_title() {
             "--area",
             "Web App\\Payments",
             "--iteration",
-            "Web App\\Sprint 1"
+            "Web App\\Sprint 1",
+            "--field",
+            "Custom.Severity=High",
+            "--field",
+            "Custom.Notes=a=b"
         ]))
         .unwrap(),
         CliCommand::WiCreate {
@@ -1277,6 +1281,10 @@ fn parses_work_item_create_and_requires_type_and_title() {
             priority: Some(2),
             area: Some("Web App\\Payments".into()),
             iteration: Some("Web App\\Sprint 1".into()),
+            fields: vec![
+                ("Custom.Severity".into(), "High".into()),
+                ("Custom.Notes".into(), "a=b".into()),
+            ],
             profile: None,
             project: None,
         }
@@ -1296,6 +1304,50 @@ fn parses_work_item_create_and_requires_type_and_title() {
         ]))
         .is_err()
     );
+}
+
+#[test]
+fn parses_repeatable_custom_field_assignments_and_rejects_invalid_forms() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "wi",
+            "create",
+            "--type",
+            "Bug",
+            "--title",
+            "T",
+            "--field",
+            "Custom.Severity=",
+        ]))
+        .unwrap(),
+        CliCommand::WiCreate {
+            work_item_type: "Bug".into(),
+            title: "T".into(),
+            description_file: None,
+            assign_to: None,
+            tags: None,
+            priority: None,
+            area: None,
+            iteration: None,
+            fields: vec![("Custom.Severity".into(), "".into())],
+            profile: None,
+            project: None,
+        }
+    );
+    for field in [
+        "NoEquals",
+        "=NoReference",
+        "Has Space=value",
+        "Custom/Slash=value",
+    ] {
+        assert!(
+            cli::parse(&svec(&[
+                "wi", "create", "--type", "Bug", "--title", "T", "--field", field
+            ]))
+            .is_err(),
+            "accepted invalid --field {field}"
+        );
+    }
 }
 
 #[test]
@@ -1326,6 +1378,7 @@ fn parses_work_item_update_and_requires_a_field() {
             description_file: Some("/tmp/description".into()),
             area: None,
             iteration: None,
+            fields: vec![],
             profile: None,
             project: None,
         }
@@ -1350,11 +1403,59 @@ fn parses_work_item_update_and_requires_a_field() {
             description_file: None,
             area: Some("Web App\\Payments".into()),
             iteration: Some("Web App\\Sprint 1".into()),
+            fields: vec![],
+            profile: None,
+            project: None,
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&[
+            "wi",
+            "update",
+            "12",
+            "--field",
+            "Custom.Severity=High"
+        ]))
+        .unwrap(),
+        CliCommand::WiUpdate {
+            id: 12,
+            state: None,
+            title: None,
+            assign_to: None,
+            tags: None,
+            description_file: None,
+            area: None,
+            iteration: None,
+            fields: vec![("Custom.Severity".into(), "High".into())],
             profile: None,
             project: None,
         }
     );
     assert!(cli::parse(&svec(&["wi", "update", "12"])).is_err());
+}
+
+#[test]
+fn parses_work_item_fields_and_requires_type() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "wi",
+            "fields",
+            "--type",
+            "User Story",
+            "--project",
+            "Web App",
+            "--profile",
+            "work"
+        ]))
+        .unwrap(),
+        CliCommand::WiFields {
+            work_item_type: "User Story".into(),
+            profile: Some("work".into()),
+            project: Some("Web App".into()),
+        }
+    );
+    assert!(cli::parse(&svec(&["wi", "fields"])).is_err());
+    assert!(cli::parse(&svec(&["wi", "fields", "--type", ""])).is_err());
 }
 
 #[test]

@@ -152,9 +152,13 @@ ado wi create --type Bug --title "Login fails" --description-file /tmp/descripti
   --assign-to ada@example.com --tags "auth;urgent"
 ado wi update 123 --state Active --tags "auth;investigating"
 ado wi open 123
+ado wi fields --type Bug
+ado wi create --type Bug --title "Add search" --field Custom.Severity=High
 ```
 
 `wi query` requires exactly one of `--wiql`, `--wiql-file`, or `--search`; `--top` defaults to 100. Search covers title and description and orders by the most recently changed work items. Description files are sent as-is, including HTML. `wi update` requires at least one field option, and `--tags` replaces the complete tag value. `--area` and `--iteration` set `System.AreaPath` and `System.IterationPath` on `wi create` and `wi update`; pass the full backslash-separated path, e.g. `--area 'Project\Team'`. `wi create --priority` accepts 1 to 4. `wi open` and `pr open` print the web URL before launching the platform browser.
+
+Process-specific fields are set by reference name: `wi fields --type TYPE` lists every field for a work item type with its `referenceName` and any `allowedValues`; pass `--field REF=VALUE` (repeatable) to `wi create` or `wi update`, e.g. `--field Custom.Severity=High`. Values are sent as-is and validated by Azure DevOps. `--field` splits on the first `=`, and counts as a field option for `wi update`.
 
 The JSON output contracts for pull-request mutations and queries are:
 
@@ -171,11 +175,12 @@ The JSON output contracts for pull-request mutations and queries are:
 The JSON output contracts for work items are:
 
 - `wi query`: an array of `{id, type, title, state, assignedTo, areaPath, iterationPath, tags, url}`. `assignedTo` is the identity's unique name, falling back to display name or `null`; `tags` is an array.
-- `wi show`, `wi create`, and `wi update`: `{id, url, fields}`, where `fields` is Azure DevOps' complete fields object.
+- `wi show`, `wi create`, and `wi update`: `{id, url, fields, customFields}`, where `fields` is Azure DevOps' complete fields object and `customFields` holds every field whose reference name starts with `Custom.`, keyed by reference name (an empty object when none).
 - `wi comments`: an array of `{id, author, createdDate, text}`; `wi comment` returns one object in the same shape.
 - `wi open` and `pr open`: the web URL as a single text line rather than JSON.
+- `wi fields`: an array of `{name, referenceName, allowedValues}` for the given work item type; `allowedValues` is an empty array when the field has none.
 
-For automation and agents, successful PR data commands and `wi query`, `show`, `comments`, `comment`, `create`, and `update` output JSON on stdout. Diagnostics go to stderr and failures return a nonzero exit status. Authentication and help remain human-readable and require an interactive terminal where secrets or confirmation are involved. Never parse diagnostics for data, and never place tokens in arguments or environment variables.
+For automation and agents, successful PR data commands and `wi query`, `show`, `comments`, `comment`, `create`, `update`, and `fields` output JSON on stdout. Diagnostics go to stderr and failures return a nonzero exit status. Authentication and help remain human-readable and require an interactive terminal where secrets or confirmation are involved. Never parse diagnostics for data, and never place tokens in arguments or environment variables.
 
 The offline suite exercises mock ADO responses, credential-store failures and real temporary Git repositories. The Linux container suite additionally exercises a real Secret Service round-trip. Live ADO permissions, organisation policy and credential-store approval must be verified during interactive setup; tests do not write real credentials or mutate live pull requests. This version reads and updates PR metadata, labels, reviewers, work-item links, changes and threads, reads and updates work items, and reads branch-policy evaluation status; build logs themselves are not exposed as a command.
 

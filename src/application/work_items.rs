@@ -103,6 +103,7 @@ impl Application {
         priority: Option<u8>,
         area: Option<&str>,
         iteration: Option<&str>,
+        fields: &[(String, String)],
         profile_name: Option<&str>,
         project: Option<&str>,
     ) -> Result<()> {
@@ -131,6 +132,9 @@ impl Application {
         if let Some(value) = iteration {
             add_field(&mut patch, "System.IterationPath", value);
         }
+        for (reference, value) in fields {
+            add_field(&mut patch, reference, value);
+        }
         let item = self.work_item_client(&scope)?.create_work_item(
             &scope.project,
             work_item_type,
@@ -150,6 +154,7 @@ impl Application {
         description_file: Option<&str>,
         area: Option<&str>,
         iteration: Option<&str>,
+        fields: &[(String, String)],
         profile_name: Option<&str>,
         project: Option<&str>,
     ) -> Result<()> {
@@ -176,6 +181,9 @@ impl Application {
         if let Some(value) = iteration {
             add_field(&mut patch, "System.IterationPath", value);
         }
+        for (reference, value) in fields {
+            add_field(&mut patch, reference, value);
+        }
         let item = self.work_item_client(&scope)?.update_work_item(
             &scope.project,
             id,
@@ -194,6 +202,21 @@ impl Application {
         let url = work_item_url(&scope.organization, &scope.project, id)?;
         println!("{url}");
         open_browser(&url)
+    }
+
+    pub(super) fn wi_fields(
+        &self,
+        work_item_type: &str,
+        profile_name: Option<&str>,
+        project: Option<&str>,
+    ) -> Result<()> {
+        let scope = self.work_item_scope(profile_name, project)?;
+        let fields = self
+            .work_item_client(&scope)?
+            .work_item_type_fields(&scope.project, work_item_type)?;
+        write_json(&Value::Array(
+            fields.iter().map(field_definition).collect::<Result<_>>()?,
+        ))
     }
 
     fn work_item_scope(&self, profile_name: Option<&str>, project: Option<&str>) -> Result<Scope> {
@@ -286,6 +309,41 @@ fn show_work_item(item: &Value, organization: &Organization, project: &str) -> R
         "id": id,
         "url": work_item_url(organization, project, id)?,
         "fields": fields(item)?,
+        "customFields": custom_fields(fields(item)?),
+    }))
+}
+
+/// Every field whose reference name starts with `Custom.`, keyed by that reference name.
+fn custom_fields(fields: &Map<String, Value>) -> Value {
+    Value::Object(
+        fields
+            .iter()
+            .filter(|(name, _)| name.starts_with("Custom."))
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect(),
+    )
+}
+
+/// Builds `{ name, referenceName, allowedValues }` from a `workitemtypes/{type}/fields` entry.
+fn field_definition(field: &Value) -> Result<Value> {
+    let object = field.as_object().ok_or_else(invalid_work_item_response)?;
+    let name = object
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(invalid_work_item_response)?;
+    let reference_name = object
+        .get("referenceName")
+        .and_then(Value::as_str)
+        .ok_or_else(invalid_work_item_response)?;
+    let allowed_values = object
+        .get("allowedValues")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    Ok(json!({
+        "name": name,
+        "referenceName": reference_name,
+        "allowedValues": allowed_values,
     }))
 }
 
@@ -387,6 +445,69 @@ mod tests {
             output["url"],
             "https://dev.azure.com/acme/My%20Project/_workitems/edit/42"
         );
+    }
+
+    #[test]
+    fn show_work_item_includes_custom_fields() {
+        let item = json!({
+            "id": 42,
+            "fields": {
+                "System.Title": "Broken login",
+                "Custom.Severity": "High",
+                "Custom.Risk": null,
+            }
+        });
+        let output =
+            show_work_item(&item, &Organization::parse("acme").unwrap(), "My Project").unwrap();
+        assert_eq!(
+            output["customFields"],
+            json!({"Custom.Severity": "High", "Custom.Risk": null})
+        );
+        assert!(
+            !output["customFields"]
+                .as_object()
+                .unwrap()
+                .contains_key("System.Title")
+        );
+    }
+
+    #[test]
+    fn show_work_item_custom_fields_is_empty_object_when_none_present() {
+        let item = json!({
+            "id": 42,
+            "fields": {
+                "System.Title": "Broken login",
+            }
+        });
+        let output =
+            show_work_item(&item, &Organization::parse("acme").unwrap(), "My Project").unwrap();
+        assert_eq!(output["customFields"], json!({}));
+    }
+
+    #[test]
+    fn field_definition_defaults_allowed_values_to_empty_array() {
+        assert_eq!(
+            field_definition(&json!({
+                "name": "Severity",
+                "referenceName": "Custom.Severity",
+            }))
+            .unwrap(),
+            json!({"name": "Severity", "referenceName": "Custom.Severity", "allowedValues": []})
+        );
+        assert_eq!(
+            field_definition(&json!({
+                "name": "Severity",
+                "referenceName": "Custom.Severity",
+                "allowedValues": ["High", "Low"],
+            }))
+            .unwrap(),
+            json!({
+                "name": "Severity",
+                "referenceName": "Custom.Severity",
+                "allowedValues": ["High", "Low"],
+            })
+        );
+        assert!(field_definition(&json!({"referenceName": "Custom.Severity"})).is_err());
     }
 
     #[test]

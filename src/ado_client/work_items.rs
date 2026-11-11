@@ -88,6 +88,29 @@ impl<T: HttpTransport> AdoClient<T> {
         Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
     }
 
+    pub fn work_item_type_fields(&self, project: &str, work_item_type: &str) -> Result<Vec<Value>> {
+        self.validate_project(project)?;
+        if work_item_type.is_empty() {
+            return Err(Error("Work item type must not be empty.".into()));
+        }
+        let obj = self.get_object(
+            &[
+                project,
+                "_apis",
+                "wit",
+                "workitemtypes",
+                work_item_type,
+                "fields",
+            ],
+            &[("$expand", "allowedValues")],
+            true,
+        )?;
+        obj.get("value")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or_else(invalid_response)
+    }
+
     pub fn work_item(&self, project: &str, id: i64) -> Result<Value> {
         self.validate_work_item(project, id)?;
         self.get_object(

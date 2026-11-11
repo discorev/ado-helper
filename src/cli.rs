@@ -199,6 +199,7 @@ pub enum CliCommand {
         priority: Option<u8>,
         area: Option<String>,
         iteration: Option<String>,
+        fields: Vec<(String, String)>,
         profile: Option<String>,
         project: Option<String>,
     },
@@ -211,11 +212,17 @@ pub enum CliCommand {
         description_file: Option<String>,
         area: Option<String>,
         iteration: Option<String>,
+        fields: Vec<(String, String)>,
         profile: Option<String>,
         project: Option<String>,
     },
     WiOpen {
         id: i64,
+        profile: Option<String>,
+        project: Option<String>,
+    },
+    WiFields {
+        work_item_type: String,
         profile: Option<String>,
         project: Option<String>,
     },
@@ -261,6 +268,7 @@ pub fn parse(arguments: &[String]) -> Result<CliCommand> {
         ("wi", "create") => parse_wi_create(args),
         ("wi", "update") => parse_wi_update(args),
         ("wi", "open") => parse_wi_id(args, "open"),
+        ("wi", "fields") => parse_wi_fields(args),
         _ => Err(Error(format!(
             "Unknown command '{} {}'. Run 'ado help' for usage.",
             group, arguments[1]
@@ -1189,7 +1197,7 @@ fn parse_wi_query(args: &[String]) -> Result<CliCommand> {
 
 fn parse_wi_id(args: &[String], command: &str) -> Result<CliCommand> {
     let mut v = common(args, &["--profile", "--project"])?;
-    let id = work_item_id(&mut v, command)?;
+    let id = work_item_id(v.positional.take(), command)?;
     let profile = v.take("--profile");
     let project = v.take("--project");
     Ok(match command {
@@ -1214,7 +1222,7 @@ fn parse_wi_id(args: &[String], command: &str) -> Result<CliCommand> {
 
 fn parse_wi_comment(args: &[String]) -> Result<CliCommand> {
     let mut v = common(args, &["--body-file", "--profile", "--project"])?;
-    let id = work_item_id(&mut v, "comment")?;
+    let id = work_item_id(v.positional.take(), "comment")?;
     Ok(CliCommand::WiComment {
         id,
         body_file: v.required("--body-file")?,
@@ -1224,7 +1232,7 @@ fn parse_wi_comment(args: &[String]) -> Result<CliCommand> {
 }
 
 fn parse_wi_create(args: &[String]) -> Result<CliCommand> {
-    let mut v = common(
+    let mut v = multi_values(
         args,
         &[
             "--type",
@@ -1238,6 +1246,8 @@ fn parse_wi_create(args: &[String]) -> Result<CliCommand> {
             "--profile",
             "--project",
         ],
+        &["--field"],
+        &[],
     )?;
     if v.positional.is_some() {
         return Err(Error(
@@ -1251,6 +1261,11 @@ fn parse_wi_create(args: &[String]) -> Result<CliCommand> {
             _ => return Err(Error("--priority must be 1, 2, 3 or 4.".into())),
         },
     };
+    let fields = v
+        .repeated("--field")
+        .iter()
+        .map(|raw| parse_field_option(raw))
+        .collect::<Result<Vec<_>>>()?;
     Ok(CliCommand::WiCreate {
         work_item_type: v.required("--type")?,
         title: v.required("--title")?,
@@ -1260,13 +1275,14 @@ fn parse_wi_create(args: &[String]) -> Result<CliCommand> {
         priority,
         area: v.take("--area"),
         iteration: v.take("--iteration"),
+        fields,
         profile: v.take("--profile"),
         project: v.take("--project"),
     })
 }
 
 fn parse_wi_update(args: &[String]) -> Result<CliCommand> {
-    let mut v = common(
+    let mut v = multi_values(
         args,
         &[
             "--state",
@@ -1279,8 +1295,10 @@ fn parse_wi_update(args: &[String]) -> Result<CliCommand> {
             "--profile",
             "--project",
         ],
+        &["--field"],
+        &[],
     )?;
-    let id = work_item_id(&mut v, "update")?;
+    let id = work_item_id(v.positional.take(), "update")?;
     let state = v.take("--state");
     let title = v.take("--title");
     let assign_to = v.take("--assign-to");
@@ -1288,6 +1306,11 @@ fn parse_wi_update(args: &[String]) -> Result<CliCommand> {
     let description_file = v.take("--description-file");
     let area = v.take("--area");
     let iteration = v.take("--iteration");
+    let fields = v
+        .repeated("--field")
+        .iter()
+        .map(|raw| parse_field_option(raw))
+        .collect::<Result<Vec<_>>>()?;
     if state.is_none()
         && title.is_none()
         && assign_to.is_none()
@@ -1295,6 +1318,7 @@ fn parse_wi_update(args: &[String]) -> Result<CliCommand> {
         && description_file.is_none()
         && area.is_none()
         && iteration.is_none()
+        && fields.is_empty()
     {
         return Err(Error(
             "wi update requires at least one field option.".into(),
@@ -1309,16 +1333,28 @@ fn parse_wi_update(args: &[String]) -> Result<CliCommand> {
         description_file,
         area,
         iteration,
+        fields,
         profile: v.take("--profile"),
         project: v.take("--project"),
     })
 }
 
-fn work_item_id(v: &mut Values, command: &str) -> Result<i64> {
-    let raw = v
-        .positional
-        .take()
-        .ok_or_else(|| Error(format!("wi {command} requires a work item ID.")))?;
+fn parse_wi_fields(args: &[String]) -> Result<CliCommand> {
+    let mut v = common(args, &["--type", "--profile", "--project"])?;
+    if v.positional.is_some() {
+        return Err(Error(
+            "wi fields does not accept a positional argument.".into(),
+        ));
+    }
+    Ok(CliCommand::WiFields {
+        work_item_type: v.required("--type")?,
+        profile: v.take("--profile"),
+        project: v.take("--project"),
+    })
+}
+
+fn work_item_id(positional: Option<String>, command: &str) -> Result<i64> {
+    let raw = positional.ok_or_else(|| Error(format!("wi {command} requires a work item ID.")))?;
     let id = raw
         .parse::<i64>()
         .map_err(|_| Error("Work item ID must be a positive integer.".into()))?;
@@ -1327,4 +1363,20 @@ fn work_item_id(v: &mut Values, command: &str) -> Result<i64> {
     } else {
         Ok(id)
     }
+}
+
+/// Parses a repeatable `--field REF=VALUE` option, splitting on the first `=`.
+fn parse_field_option(raw: &str) -> Result<(String, String)> {
+    let Some((reference, value)) = raw.split_once('=') else {
+        return Err(Error("--field must be in the form REF=VALUE.".into()));
+    };
+    if reference.is_empty() {
+        return Err(Error("--field reference name must not be empty.".into()));
+    }
+    if reference.chars().any(|c| c.is_whitespace() || c == '/') {
+        return Err(Error(
+            "--field reference name must not contain whitespace or '/'.".into(),
+        ));
+    }
+    Ok((reference.to_owned(), value.to_owned()))
 }

@@ -84,17 +84,21 @@ const HELP: &str = "Usage:
   ado wi comment ID --body-file PATH [--project NAME] [--profile NAME]
   ado wi create --type TYPE --title TEXT [--description-file PATH] [--assign-to USER]
       [--tags TAGS] [--priority 1-4] [--area PATH] [--iteration PATH]
-      [--field REF=VALUE]... [--project NAME] [--profile NAME]
+      [--field REF=VALUE]... [--link TYPE:ID]... [--project NAME] [--profile NAME]
   ado wi update ID [--state STATE] [--title TEXT] [--assign-to USER] [--tags TAGS]
       [--description-file PATH] [--area PATH] [--iteration PATH]
-      [--field REF=VALUE]... [--project NAME] [--profile NAME]
+      [--field REF=VALUE]... [--link TYPE:ID]... [--remove-link TYPE:ID]...
+      [--project NAME] [--profile NAME]
   ado wi open ID [--project NAME] [--profile NAME]
   ado wi fields --type TYPE [--project NAME] [--profile NAME]
 
 TARGET is an Azure DevOps PR URL or positive PR number. Omit it where allowed to use the current branch.
 Work-item commands derive the project from the current Azure Git remote unless --project is supplied.
 Command data is written as JSON; open commands print the URL before launching it.
---field sets any field by reference name (e.g. Custom.Severity=High); wi fields --type TYPE lists reference names and allowed values.";
+--field sets any field by reference name (e.g. Custom.Severity=High); wi fields --type TYPE lists reference names and allowed values.
+--link TYPE:ID (repeatable) links this work item to another; TYPE is parent, child, related,
+    predecessor, or successor, where predecessor means the item this one depends on. wi update
+    also accepts --remove-link TYPE:ID (repeatable) to remove a link; both count as field options.";
 
 /// Usage for `ado GROUP [COMMAND] ... --help`: the matching HELP entries plus its notes.
 /// Returns None for an unknown group or command so the parser reports it as usual.

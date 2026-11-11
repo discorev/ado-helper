@@ -661,6 +661,7 @@ fn work_item_comment_create_and_update_send_expected_patch_content_types() {
                 r.url.path(),
                 "/acme/Project/_apis/wit/workitems/$User%20Story"
             );
+            assert_eq!(query(r)["$expand"], "relations");
             assert_eq!(r.headers["Content-Type"], "application/json-patch+json");
             let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
             assert_eq!(
@@ -675,6 +676,7 @@ fn work_item_comment_create_and_update_send_expected_patch_content_types() {
         2 => {
             assert_eq!(r.method, "PATCH");
             assert_eq!(r.url.path(), "/acme/Project/_apis/wit/workitems/8");
+            assert_eq!(query(r)["$expand"], "relations");
             assert_eq!(r.headers["Content-Type"], "application/json-patch+json");
             let body: Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
             assert_eq!(

@@ -209,10 +209,11 @@ impl<T: HttpTransport> AdoClient<T> {
         }
         self.validate_patch(patch)?;
         let typed = format!("${work_item_type}");
+        // $expand=relations so create/update responses carry the relations array like `work_item_with_relations`.
         self.send_object_options(
             "POST",
             &[project, "_apis", "wit", "workitems", &typed],
-            &[],
+            &[("$expand", "relations")],
             patch,
             Some("7.1"),
             "application/json-patch+json",
@@ -225,7 +226,7 @@ impl<T: HttpTransport> AdoClient<T> {
         self.send_object_options(
             "PATCH",
             &[project, "_apis", "wit", "workitems", &id.to_string()],
-            &[],
+            &[("$expand", "relations")],
             patch,
             Some("7.1"),
             "application/json-patch+json",

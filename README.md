@@ -154,11 +154,15 @@ ado wi update 123 --state Active --tags "auth;investigating"
 ado wi open 123
 ado wi fields --type Bug
 ado wi create --type Bug --title "Add search" --field Custom.Severity=High
+ado wi create --type Task --title "Add search endpoint" --link parent:100 --link related:101
+ado wi update 123 --link successor:130 --remove-link related:101
 ```
 
 `wi query` requires exactly one of `--wiql`, `--wiql-file`, or `--search`; `--top` defaults to 100. Search covers title and description and orders by the most recently changed work items. Description files are sent as-is, including HTML. `wi update` requires at least one field option, and `--tags` replaces the complete tag value. `--area` and `--iteration` set `System.AreaPath` and `System.IterationPath` on `wi create` and `wi update`; pass the full backslash-separated path, e.g. `--area 'Project\Team'`. `wi create --priority` accepts 1 to 4. `wi open` and `pr open` print the web URL before launching the platform browser.
 
 Process-specific fields are set by reference name: `wi fields --type TYPE` lists every field for a work item type with its `referenceName` and any `allowedValues`; pass `--field REF=VALUE` (repeatable) to `wi create` or `wi update`, e.g. `--field Custom.Severity=High`. Values are sent as-is and validated by Azure DevOps. `--field` splits on the first `=`, and counts as a field option for `wi update`.
+
+Work items link to each other with `--link TYPE:ID` (repeatable) on `wi create` and `wi update`, and unlink with `--remove-link TYPE:ID` (repeatable, `wi update` only). `TYPE` is one of `parent`, `child`, `related`, `predecessor` (the item this one depends on), or `successor`; an unknown type or a non-positive `ID` is a parse error, and passing the same `TYPE:ID` to both `--link` and `--remove-link` is also a parse error. `wi update` is idempotent: adding a link that already exists is a no-op (an item is never linked twice), and removing one that doesn't exist fails with an error naming the missing link, e.g. "Work item 7 has no predecessor link to 12." `--link` and `--remove-link` both count as field options for `wi update`.
 
 The JSON output contracts for pull-request mutations and queries are:
 
@@ -175,14 +179,14 @@ The JSON output contracts for pull-request mutations and queries are:
 The JSON output contracts for work items are:
 
 - `wi query`: an array of `{id, type, title, state, assignedTo, areaPath, iterationPath, tags, url}`. `assignedTo` is the identity's unique name, falling back to display name or `null`; `tags` is an array.
-- `wi show`, `wi create`, and `wi update`: `{id, url, fields, customFields}`, where `fields` is Azure DevOps' complete fields object and `customFields` holds every field whose reference name starts with `Custom.`, keyed by reference name (an empty object when none).
+- `wi show`, `wi create`, and `wi update`: `{id, url, fields, customFields, relations}`, where `fields` is Azure DevOps' complete fields object, `customFields` holds every field whose reference name starts with `Custom.`, keyed by reference name (an empty object when none), and `relations` is an array of `{type, rel, id, url, name}` (an empty array when none) — `type` is the friendly link name (`parent`, `child`, `related`, `predecessor`, `successor`) or `null` for other relation kinds such as pull request links, `id` is the linked work item's ID or `null`, `url` is the web URL for a work-item link and the raw relation URL otherwise, and `name` is `attributes.name` when Azure DevOps provides one (e.g. `"Pull Request"`), otherwise `null`.
 - `wi comments`: an array of `{id, author, createdDate, text}`; `wi comment` returns one object in the same shape.
 - `wi open` and `pr open`: the web URL as a single text line rather than JSON.
 - `wi fields`: an array of `{name, referenceName, allowedValues}` for the given work item type; `allowedValues` is an empty array when the field has none.
 
 For automation and agents, successful PR data commands and `wi query`, `show`, `comments`, `comment`, `create`, `update`, and `fields` output JSON on stdout. Diagnostics go to stderr and failures return a nonzero exit status. Authentication and help remain human-readable and require an interactive terminal where secrets or confirmation are involved. Never parse diagnostics for data, and never place tokens in arguments or environment variables.
 
-The offline suite exercises mock ADO responses, credential-store failures and real temporary Git repositories. The Linux container suite additionally exercises a real Secret Service round-trip. Live ADO permissions, organisation policy and credential-store approval must be verified during interactive setup; tests do not write real credentials or mutate live pull requests. This version reads and updates PR metadata, labels, reviewers, work-item links, changes and threads, reads and updates work items, and reads branch-policy evaluation status; build logs themselves are not exposed as a command.
+The offline suite exercises mock ADO responses, credential-store failures and real temporary Git repositories. The Linux container suite additionally exercises a real Secret Service round-trip. Live ADO permissions, organisation policy and credential-store approval must be verified during interactive setup; tests do not write real credentials or mutate live pull requests. This version reads and updates PR metadata, labels, reviewers, work-item links, changes and threads, reads and updates work items and their links to each other, and reads branch-policy evaluation status; build logs themselves are not exposed as a command.
 
 ## License
 

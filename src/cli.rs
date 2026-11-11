@@ -18,6 +18,76 @@ pub struct AutoCompleteOptions {
     pub merge_strategy: String,
     pub delete_source_branch: bool,
 }
+
+/// A work-item-to-work-item link direction, as named on the CLI. Maps to the Azure DevOps
+/// link reference name `AdoClient` and the output layer both need.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkType {
+    Parent,
+    Child,
+    Related,
+    /// The item this one depends on.
+    Predecessor,
+    Successor,
+}
+
+const LINK_TYPES: [(&str, LinkType); 5] = [
+    ("parent", LinkType::Parent),
+    ("child", LinkType::Child),
+    ("related", LinkType::Related),
+    ("predecessor", LinkType::Predecessor),
+    ("successor", LinkType::Successor),
+];
+
+impl LinkType {
+    fn parse(value: &str) -> Result<Self> {
+        LINK_TYPES
+            .iter()
+            .find(|(name, _)| *name == value)
+            .map(|(_, link_type)| *link_type)
+            .ok_or_else(|| {
+                Error(format!(
+                    "Unknown link type '{value}'. Valid types: parent, child, related, predecessor, successor."
+                ))
+            })
+    }
+
+    /// The CLI's friendly name for the link type, e.g. "predecessor".
+    pub fn name(self) -> &'static str {
+        LINK_TYPES
+            .iter()
+            .find(|(_, link_type)| *link_type == self)
+            .map(|(name, _)| *name)
+            .expect("every LinkType has a name")
+    }
+
+    /// The Azure DevOps link reference name, e.g. `System.LinkTypes.Dependency-Reverse`.
+    pub fn reference_name(self) -> &'static str {
+        match self {
+            Self::Parent => "System.LinkTypes.Hierarchy-Reverse",
+            Self::Child => "System.LinkTypes.Hierarchy-Forward",
+            Self::Related => "System.LinkTypes.Related",
+            Self::Predecessor => "System.LinkTypes.Dependency-Reverse",
+            Self::Successor => "System.LinkTypes.Dependency-Forward",
+        }
+    }
+
+    /// Matches a relation's raw `rel` value, as Azure DevOps returns it, case-insensitively.
+    pub fn from_reference_name(rel: &str) -> Option<Self> {
+        LINK_TYPES
+            .iter()
+            .find(|(_, link_type)| link_type.reference_name().eq_ignore_ascii_case(rel))
+            .map(|(_, link_type)| *link_type)
+    }
+}
+
+/// A parsed `--link`/`--remove-link TYPE:ID` option.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkItemLink {
+    pub link_type: LinkType,
+    pub id: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
     Help,
@@ -200,6 +270,7 @@ pub enum CliCommand {
         area: Option<String>,
         iteration: Option<String>,
         fields: Vec<(String, String)>,
+        links: Vec<WorkItemLink>,
         profile: Option<String>,
         project: Option<String>,
     },
@@ -213,6 +284,8 @@ pub enum CliCommand {
         area: Option<String>,
         iteration: Option<String>,
         fields: Vec<(String, String)>,
+        links: Vec<WorkItemLink>,
+        remove_links: Vec<WorkItemLink>,
         profile: Option<String>,
         project: Option<String>,
     },
@@ -1246,7 +1319,7 @@ fn parse_wi_create(args: &[String]) -> Result<CliCommand> {
             "--profile",
             "--project",
         ],
-        &["--field"],
+        &["--field", "--link"],
         &[],
     )?;
     if v.positional.is_some() {
@@ -1266,6 +1339,7 @@ fn parse_wi_create(args: &[String]) -> Result<CliCommand> {
         .iter()
         .map(|raw| parse_field_option(raw))
         .collect::<Result<Vec<_>>>()?;
+    let links = parse_work_item_links(v.repeated("--link"), "--link")?;
     Ok(CliCommand::WiCreate {
         work_item_type: v.required("--type")?,
         title: v.required("--title")?,
@@ -1276,6 +1350,7 @@ fn parse_wi_create(args: &[String]) -> Result<CliCommand> {
         area: v.take("--area"),
         iteration: v.take("--iteration"),
         fields,
+        links,
         profile: v.take("--profile"),
         project: v.take("--project"),
     })
@@ -1295,7 +1370,7 @@ fn parse_wi_update(args: &[String]) -> Result<CliCommand> {
             "--profile",
             "--project",
         ],
-        &["--field"],
+        &["--field", "--link", "--remove-link"],
         &[],
     )?;
     let id = work_item_id(v.positional.take(), "update")?;
@@ -1311,6 +1386,13 @@ fn parse_wi_update(args: &[String]) -> Result<CliCommand> {
         .iter()
         .map(|raw| parse_field_option(raw))
         .collect::<Result<Vec<_>>>()?;
+    let links = parse_work_item_links(v.repeated("--link"), "--link")?;
+    let remove_links = parse_work_item_links(v.repeated("--remove-link"), "--remove-link")?;
+    if links.iter().any(|link| remove_links.contains(link)) {
+        return Err(Error(
+            "The same TYPE:ID may not be passed to both --link and --remove-link.".into(),
+        ));
+    }
     if state.is_none()
         && title.is_none()
         && assign_to.is_none()
@@ -1319,6 +1401,8 @@ fn parse_wi_update(args: &[String]) -> Result<CliCommand> {
         && area.is_none()
         && iteration.is_none()
         && fields.is_empty()
+        && links.is_empty()
+        && remove_links.is_empty()
     {
         return Err(Error(
             "wi update requires at least one field option.".into(),
@@ -1334,6 +1418,8 @@ fn parse_wi_update(args: &[String]) -> Result<CliCommand> {
         area,
         iteration,
         fields,
+        links,
+        remove_links,
         profile: v.take("--profile"),
         project: v.take("--project"),
     })
@@ -1379,4 +1465,30 @@ fn parse_field_option(raw: &str) -> Result<(String, String)> {
         ));
     }
     Ok((reference.to_owned(), value.to_owned()))
+}
+
+/// Parses a single `--link`/`--remove-link TYPE:ID` option.
+fn parse_work_item_link(raw: &str, flag: &str) -> Result<WorkItemLink> {
+    let Some((type_name, id)) = raw.split_once(':') else {
+        return Err(Error(format!("{flag} must be in the form TYPE:ID.")));
+    };
+    let link_type = LinkType::parse(type_name)?;
+    let id = id
+        .parse::<i64>()
+        .ok()
+        .filter(|id| *id > 0)
+        .ok_or_else(|| Error(format!("{flag} ID must be a positive integer.")))?;
+    Ok(WorkItemLink { link_type, id })
+}
+
+/// Parses a repeatable `TYPE:ID` option, collapsing duplicate values like `--add-work-item`.
+fn parse_work_item_links(raw: Vec<String>, flag: &str) -> Result<Vec<WorkItemLink>> {
+    let mut links = Vec::new();
+    for value in raw {
+        let link = parse_work_item_link(&value, flag)?;
+        if !links.contains(&link) {
+            links.push(link);
+        }
+    }
+    Ok(links)
 }

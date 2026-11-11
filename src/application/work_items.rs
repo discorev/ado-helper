@@ -4,8 +4,8 @@ use super::{
 };
 use ado_core::{
     Error, Result,
-    ado_client::AdoClient,
-    cli::WorkItemQuery,
+    ado_client::{AdoClient, HttpTransport},
+    cli::{LinkType, WorkItemLink, WorkItemQuery},
     git::{AzureGitRemote, GitRunner},
     keychain::CredentialStore,
     organization::Organization,
@@ -13,6 +13,8 @@ use ado_core::{
 };
 use serde_json::{Map, Value, json};
 use url::Url;
+
+mod relations;
 
 struct Scope {
     organization: Organization,
@@ -56,7 +58,7 @@ impl Application {
         let scope = self.work_item_scope(profile_name, project)?;
         let item = self
             .work_item_client(&scope)?
-            .work_item(&scope.project, id)?;
+            .work_item_with_relations(&scope.project, id)?;
         write_json(&show_work_item(&item, &scope.organization, &scope.project)?)
     }
 
@@ -104,6 +106,7 @@ impl Application {
         area: Option<&str>,
         iteration: Option<&str>,
         fields: &[(String, String)],
+        links: &[WorkItemLink],
         profile_name: Option<&str>,
         project: Option<&str>,
     ) -> Result<()> {
@@ -135,10 +138,13 @@ impl Application {
         for (reference, value) in fields {
             add_field(&mut patch, reference, value);
         }
-        let item = self.work_item_client(&scope)?.create_work_item(
+        let item = relations::apply_create(
+            &self.work_item_client(&scope)?,
+            &scope.organization,
             &scope.project,
             work_item_type,
-            &Value::Array(patch),
+            patch,
+            links,
         )?;
         write_json(&show_work_item(&item, &scope.organization, &scope.project)?)
     }
@@ -155,6 +161,8 @@ impl Application {
         area: Option<&str>,
         iteration: Option<&str>,
         fields: &[(String, String)],
+        links: &[WorkItemLink],
+        remove_links: &[WorkItemLink],
         profile_name: Option<&str>,
         project: Option<&str>,
     ) -> Result<()> {
@@ -184,10 +192,14 @@ impl Application {
         for (reference, value) in fields {
             add_field(&mut patch, reference, value);
         }
-        let item = self.work_item_client(&scope)?.update_work_item(
+        let item = relations::apply_update(
+            &self.work_item_client(&scope)?,
+            &scope.organization,
             &scope.project,
             id,
-            &Value::Array(patch),
+            patch,
+            links,
+            remove_links,
         )?;
         write_json(&show_work_item(&item, &scope.organization, &scope.project)?)
     }
@@ -310,6 +322,7 @@ fn show_work_item(item: &Value, organization: &Organization, project: &str) -> R
         "url": work_item_url(organization, project, id)?,
         "fields": fields(item)?,
         "customFields": custom_fields(fields(item)?),
+        "relations": relations::relations_output(item, organization, project)?,
     }))
 }
 
@@ -482,6 +495,55 @@ mod tests {
         let output =
             show_work_item(&item, &Organization::parse("acme").unwrap(), "My Project").unwrap();
         assert_eq!(output["customFields"], json!({}));
+    }
+
+    #[test]
+    fn show_work_item_includes_relations_and_is_empty_array_when_absent() {
+        let item = json!({
+            "id": 42,
+            "fields": {"System.Title": "Broken login"},
+            "relations": [
+                {
+                    "rel": "System.LinkTypes.Dependency-Reverse",
+                    "url": "https://dev.azure.com/acme/_apis/wit/workItems/7",
+                },
+                {
+                    "rel": "ArtifactLink",
+                    "url": "vstfs:///Git/PullRequestId/proj-guid%2Frepo-guid%2F1",
+                    "attributes": {"name": "Pull Request"},
+                },
+            ],
+        });
+        let output =
+            show_work_item(&item, &Organization::parse("acme").unwrap(), "My Project").unwrap();
+        assert_eq!(
+            output["relations"],
+            json!([
+                {
+                    "type": "predecessor",
+                    "rel": "System.LinkTypes.Dependency-Reverse",
+                    "id": 7,
+                    "url": "https://dev.azure.com/acme/My%20Project/_workitems/edit/7",
+                    "name": null,
+                },
+                {
+                    "type": null,
+                    "rel": "ArtifactLink",
+                    "id": null,
+                    "url": "vstfs:///Git/PullRequestId/proj-guid%2Frepo-guid%2F1",
+                    "name": "Pull Request",
+                },
+            ])
+        );
+
+        let item_without_relations = json!({"id": 42, "fields": {"System.Title": "Broken login"}});
+        let output = show_work_item(
+            &item_without_relations,
+            &Organization::parse("acme").unwrap(),
+            "My Project",
+        )
+        .unwrap();
+        assert_eq!(output["relations"], json!([]));
     }
 
     #[test]

@@ -781,7 +781,7 @@ mod tests {
         assert_eq!(seen[2].0, "PATCH");
         assert_eq!(
             seen[2].1,
-            "/acme/Project/_apis/wit/workitems/13?api-version=7.1"
+            "/acme/Project/_apis/wit/workitems/13?%24expand=relations&api-version=7.1"
         );
         assert_eq!(
             seen[2].2,

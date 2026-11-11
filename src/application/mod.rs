@@ -259,6 +259,7 @@ impl Application {
                 area,
                 iteration,
                 fields,
+                links,
                 profile,
                 project,
             } => self.wi_create(
@@ -271,6 +272,7 @@ impl Application {
                 area.as_deref(),
                 iteration.as_deref(),
                 &fields,
+                &links,
                 profile.as_deref(),
                 project.as_deref(),
             )?,
@@ -284,6 +286,8 @@ impl Application {
                 area,
                 iteration,
                 fields,
+                links,
+                remove_links,
                 profile,
                 project,
             } => self.wi_update(
@@ -296,6 +300,8 @@ impl Application {
                 area.as_deref(),
                 iteration.as_deref(),
                 &fields,
+                &links,
+                &remove_links,
                 profile.as_deref(),
                 project.as_deref(),
             )?,

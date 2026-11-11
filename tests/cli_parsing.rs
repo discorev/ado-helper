@@ -1285,6 +1285,7 @@ fn parses_work_item_create_and_requires_type_and_title() {
                 ("Custom.Severity".into(), "High".into()),
                 ("Custom.Notes".into(), "a=b".into()),
             ],
+            links: vec![],
             profile: None,
             project: None,
         }
@@ -1330,6 +1331,7 @@ fn parses_repeatable_custom_field_assignments_and_rejects_invalid_forms() {
             area: None,
             iteration: None,
             fields: vec![("Custom.Severity".into(), "".into())],
+            links: vec![],
             profile: None,
             project: None,
         }
@@ -1379,6 +1381,8 @@ fn parses_work_item_update_and_requires_a_field() {
             area: None,
             iteration: None,
             fields: vec![],
+            links: vec![],
+            remove_links: vec![],
             profile: None,
             project: None,
         }
@@ -1404,6 +1408,8 @@ fn parses_work_item_update_and_requires_a_field() {
             area: Some("Web App\\Payments".into()),
             iteration: Some("Web App\\Sprint 1".into()),
             fields: vec![],
+            links: vec![],
+            remove_links: vec![],
             profile: None,
             project: None,
         }
@@ -1427,11 +1433,124 @@ fn parses_work_item_update_and_requires_a_field() {
             area: None,
             iteration: None,
             fields: vec![("Custom.Severity".into(), "High".into())],
+            links: vec![],
+            remove_links: vec![],
             profile: None,
             project: None,
         }
     );
     assert!(cli::parse(&svec(&["wi", "update", "12"])).is_err());
+}
+
+#[test]
+fn parses_repeatable_work_item_links_dedupes_and_rejects_invalid_forms() {
+    assert_eq!(
+        cli::parse(&svec(&[
+            "wi",
+            "create",
+            "--type",
+            "Task",
+            "--title",
+            "T",
+            "--link",
+            "parent:1",
+            "--link",
+            "related:2",
+            "--link",
+            "parent:1",
+        ]))
+        .unwrap(),
+        CliCommand::WiCreate {
+            work_item_type: "Task".into(),
+            title: "T".into(),
+            description_file: None,
+            assign_to: None,
+            tags: None,
+            priority: None,
+            area: None,
+            iteration: None,
+            fields: vec![],
+            links: vec![
+                WorkItemLink {
+                    link_type: LinkType::Parent,
+                    id: 1,
+                },
+                WorkItemLink {
+                    link_type: LinkType::Related,
+                    id: 2,
+                },
+            ],
+            profile: None,
+            project: None,
+        }
+    );
+    assert_eq!(
+        cli::parse(&svec(&[
+            "wi",
+            "update",
+            "12",
+            "--link",
+            "successor:5",
+            "--remove-link",
+            "predecessor:6",
+        ]))
+        .unwrap(),
+        CliCommand::WiUpdate {
+            id: 12,
+            state: None,
+            title: None,
+            assign_to: None,
+            tags: None,
+            description_file: None,
+            area: None,
+            iteration: None,
+            fields: vec![],
+            links: vec![WorkItemLink {
+                link_type: LinkType::Successor,
+                id: 5,
+            }],
+            remove_links: vec![WorkItemLink {
+                link_type: LinkType::Predecessor,
+                id: 6,
+            }],
+            profile: None,
+            project: None,
+        }
+    );
+    // --link alone counts as a field option.
+    assert!(cli::parse(&svec(&["wi", "update", "12", "--link", "related:5"])).is_ok());
+    // wi create has no existing relations, so --remove-link is not accepted there.
+    assert!(
+        cli::parse(&svec(&[
+            "wi",
+            "create",
+            "--type",
+            "Bug",
+            "--title",
+            "T",
+            "--remove-link",
+            "related:5"
+        ]))
+        .is_err()
+    );
+    for value in ["related:0", "related:-1", "nope:1", "related", "related:x"] {
+        assert!(
+            cli::parse(&svec(&["wi", "update", "12", "--link", value])).is_err(),
+            "accepted invalid --link {value}"
+        );
+    }
+    assert!(
+        cli::parse(&svec(&[
+            "wi",
+            "update",
+            "12",
+            "--link",
+            "related:5",
+            "--remove-link",
+            "related:5",
+        ]))
+        .is_err()
+    );
 }
 
 #[test]

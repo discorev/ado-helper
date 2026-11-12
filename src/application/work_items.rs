@@ -16,10 +16,10 @@ use url::Url;
 
 mod relations;
 
-struct Scope {
-    organization: Organization,
-    project: String,
-    profile: Profile,
+pub(super) struct Scope {
+    pub(super) organization: Organization,
+    pub(super) project: String,
+    pub(super) profile: Profile,
 }
 
 impl Application {
@@ -231,7 +231,11 @@ impl Application {
         ))
     }
 
-    fn work_item_scope(&self, profile_name: Option<&str>, project: Option<&str>) -> Result<Scope> {
+    pub(super) fn work_item_scope(
+        &self,
+        profile_name: Option<&str>,
+        project: Option<&str>,
+    ) -> Result<Scope> {
         if project.is_some_and(|value| value.is_empty()) {
             return Err(Error("--project must not be empty.".into()));
         }

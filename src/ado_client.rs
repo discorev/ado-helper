@@ -11,6 +11,7 @@ use std::{
 };
 use url::Url;
 
+pub mod builds;
 mod pull_requests;
 mod work_items;
 
@@ -744,6 +745,23 @@ impl<T: HttpTransport> AdoClient<T> {
         if !(200..300).contains(&res.status) {
             let path = percent_encoding::percent_decode_str(req.url.path()).decode_utf8_lossy();
             let base: String = match res.status{401=>"Azure DevOps rejected authentication (HTTP 401). Renew the affected profile with 'ado auth update NAME'.".into(),403=>"Azure DevOps denied access (HTTP 403). Check the profile's PAT scopes and account permissions for this repository.".into(),s=>format!("Azure DevOps returned HTTP {s} for {} {path}.",req.method)};
+            let base = if matches!(res.status, 401 | 403) {
+                let scope = if req.url.path().contains("/_apis/build/") {
+                    Some("Build — Read (vso.build)")
+                } else if req.url.path().contains("/_apis/test/") {
+                    Some("Test Management — Read (vso.test)")
+                } else {
+                    None
+                };
+                match scope {
+                    Some(scope) => format!(
+                        "{base} The PAT probably lacks {scope}; renew it with 'ado auth update NAME'."
+                    ),
+                    None => base,
+                }
+            } else {
+                base
+            };
             return Err(Error(match server_message(&res.body) {
                 Some(message) => format!("{base} Azure DevOps said: {message}"),
                 None => base,

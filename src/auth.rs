@@ -198,7 +198,7 @@ pub fn pat_settings_url(org: &Organization) -> String {
 }
 pub fn scope_instructions(org: &Organization) -> String {
     format!(
-        "Create an organization-scoped, short-lived PAT for {}:\n  Required: Code — Read & write (vso.code_write)\n  Required for PR comments: PR threads — Read & write (vso.threads_full; use \"Show all scopes\")\n  Required: Work Items — Read & write (vso.work_write)\n  Required for reviewers by email or name: Identity — Read (vso.identity)\n  Not needed by current ado commands: Build — Read (vso.build)\nDo not choose Full access. If a required scope is unavailable, check your organization policy\nwith an administrator rather than broadening the token.\nToken settings: {}",
+        "Create an organization-scoped, short-lived PAT for {}:\n  Required: Code — Read & write (vso.code_write)\n  Required for PR comments: PR threads — Read & write (vso.threads_full; use \"Show all scopes\")\n  Required: Work Items — Read & write (vso.work_write)\n  Required for reviewers by email or name: Identity — Read (vso.identity)\n  Required for pipelines: Build — Read (vso.build)\n  Required for pipeline tests: Test Management — Read (vso.test)\nDo not choose Full access. If a required scope is unavailable, check your organization policy\nwith an administrator rather than broadening the token.\nToken settings: {}",
         org.name,
         pat_settings_url(org)
     )

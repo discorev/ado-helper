@@ -91,10 +91,24 @@ const HELP: &str = "Usage:
       [--project NAME] [--profile NAME]
   ado wi open ID [--project NAME] [--profile NAME]
   ado wi fields --type TYPE [--project NAME] [--profile NAME]
+  ado pipeline list [--name FILTER] [--project NAME] [--profile NAME]
+  ado pipeline runs [--pipeline ID|NAME] [--branch BRANCH] [--status STATUS]
+      [--result RESULT] [--top N] [--project NAME] [--profile NAME]
+  ado pipeline show RUN [--project NAME] [--profile NAME]
+  ado pipeline log RUN (--log-id N | --failed) [--tail N] [--project NAME] [--profile NAME]
+  ado pipeline tests RUN [--all] [--project NAME] [--profile NAME]
+  ado pipeline open RUN [--project NAME] [--profile NAME]
 
 TARGET is an Azure DevOps PR URL or positive PR number. Omit it where allowed to use the current branch.
-Work-item commands derive the project from the current Azure Git remote unless --project is supplied.
-Command data is written as JSON; open commands print the URL before launching it.
+Work-item and pipeline commands derive the project from the current Azure Git remote unless --project is supplied.
+RUN is a positive build ID or https://dev.azure.com/ORG/PROJECT/_build/results?buildId=N.
+A build URL supplies the organization and project; a conflicting --project is rejected.
+Pipeline runs are newest first; --top defaults to 25. --branch accepts names with or without refs/heads/.
+Pipeline --status: none|inProgress|completed|cancelling|postponed|notStarted|all.
+Pipeline --result: none|succeeded|partiallySucceeded|failed|canceled.
+Pipeline log prints raw text; --tail keeps the last N lines per log (0 prints no log lines).
+Pipeline tests includes failed results by default; --all includes all outcomes.
+Command data is written as JSON; log prints raw text and open commands print the URL before launching it.
 --field sets any field by reference name (e.g. Custom.Severity=High); wi fields --type TYPE lists reference names and allowed values.
 --link TYPE:ID (repeatable) links this work item to another; TYPE is parent, child, related,
     predecessor, or successor, where predecessor means the item this one depends on. wi update

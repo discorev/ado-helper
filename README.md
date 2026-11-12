@@ -1,6 +1,6 @@
 # ado helper
 
-`ado` is a small macOS and Linux command-line tool for Azure DevOps pull-request review and work-item automation. It stores PATs in the native credential store, emits JSON for review data, and uses the SSH identity already configured for Git clones. It never passes a PAT to Git.
+`ado` is a small macOS and Linux command-line tool for Azure DevOps pull-request review, work-item automation and read-only pipeline diagnostics. It stores PATs in the native credential store, emits JSON for review data, and uses the SSH identity already configured for Git clones. It never passes a PAT to Git.
 
 Requires Rust 1.91 or later. Build and test the offline-capable code with:
 
@@ -42,7 +42,7 @@ ado auth update work
 
 The command opens the organization PAT form unless `--no-browser` is supplied, explains the required scopes, reads the PAT with hidden terminal input, verifies its identity, asks before saving, then stores it in macOS Keychain or Linux Secret Service. Profiles map organizations to identities; profile files contain no tokens. `auth status` only reads local profile metadata unless `--check` is supplied. `auth remove NAME` removes local profile and credential-store data; it does not revoke the PAT in Azure DevOps.
 
-Replace the placeholders with the organisation name from each ADO URL; one profile per organisation lets you use a different identity for each. Select **Code → Read & write** (`vso.code_write`), **Pull Request Threads → Read & write** (`vso.threads_full`, for comments), **Work Items → Read & write** (`vso.work_write`), and **Identity → Read** (`vso.identity`, to resolve `--reviewer`/`--add-reviewer` emails and names to identity IDs) under custom scopes (use **Show all scopes**). Creating or updating pull requests requires **Code → Read & write**; the Pull Request Threads scope covers comments only. Existing PATs created with **Code → Read** or without work-item write access may need to be regenerated before using the new PR mutations or `ado wi` commands. No Azure subscription login or Azure CLI configuration is used. Setup verifies the account identity; it cannot attest to the scope selections you made in the browser. [Microsoft scope reference](https://learn.microsoft.com/en-us/azure/devops/integrate/get-started/authentication/oauth?view=azure-devops).
+Replace the placeholders with the organisation name from each ADO URL; one profile per organisation lets you use a different identity for each. Select **Code → Read & write** (`vso.code_write`), **Pull Request Threads → Read & write** (`vso.threads_full`, for comments), **Work Items → Read & write** (`vso.work_write`), **Identity → Read** (`vso.identity`, to resolve `--reviewer`/`--add-reviewer` emails and names to identity IDs), **Build → Read** (`vso.build`, for pipeline commands), and **Test Management → Read** (`vso.test`, for pipeline test discovery and results) under custom scopes (use **Show all scopes**). Creating or updating pull requests requires **Code → Read & write**; the Pull Request Threads scope covers comments only. Existing PATs created with **Code → Read** or without work-item write access may need to be regenerated before using the new PR mutations or `ado wi` commands. Existing PATs without **Build → Read** and **Test Management → Read** need to be regenerated with those scopes before using pipeline diagnostics; save the replacement with `ado auth update NAME`. No Azure subscription login or Azure CLI configuration is used. Setup verifies the account identity; it cannot attest to the scope selections you made in the browser. [Microsoft scope reference](https://learn.microsoft.com/en-us/azure/devops/integrate/get-started/authentication/oauth?view=azure-devops).
 
 Profile metadata is stored in `~/.config/ado/profiles.json`; PATs are stored only in the macOS login Keychain or Linux Secret Service. On macOS, the native executable is trusted for its own items; other executables remain subject to Keychain approval. Install before adding profiles. Rebuilding or moving the executable can require renewed Keychain approval on macOS.
 
@@ -164,6 +164,34 @@ Process-specific fields are set by reference name: `wi fields --type TYPE` lists
 
 Work items link to each other with `--link TYPE:ID` (repeatable) on `wi create` and `wi update`, and unlink with `--remove-link TYPE:ID` (repeatable, `wi update` only). `TYPE` is one of `parent`, `child`, `related`, `predecessor` (the item this one depends on), or `successor`; an unknown type or a non-positive `ID` is a parse error, and passing the same `TYPE:ID` to both `--link` and `--remove-link` is also a parse error. `wi update` is idempotent: adding a link that already exists is a no-op (an item is never linked twice), and removing one that doesn't exist fails with an error naming the missing link, e.g. "Work item 7 has no predecessor link to 12." `--link` and `--remove-link` both count as field options for `wi update`.
 
+## Pipeline diagnostics
+
+Pipeline commands are read-only and use the Build and Test REST APIs. Like `wi`, they derive the project from the current Azure Git remote unless `--project NAME` is supplied, and accept `--profile NAME`. A run target is a positive build ID or a full `https://dev.azure.com/acme/Example%20Project/_build/results?buildId=123` URL. A URL supplies its organization and project without requiring a Git checkout; a conflicting `--project` or profile organization is rejected.
+
+```sh
+ado pipeline list --name "example-*"
+ado pipeline runs --pipeline CI --branch main --top 25
+ado pipeline runs --status completed --result failed --project "Example Project" --profile work
+ado pipeline show 123
+ado pipeline log 123 --failed --tail 100
+ado pipeline log 123 --log-id 7
+ado pipeline tests 123
+ado pipeline tests 123 --all
+ado pipeline open 'https://dev.azure.com/acme/Example%20Project/_build/results?buildId=123'
+```
+
+`pipeline list --name` uses Azure DevOps' definition-name filter (including `*` wildcards). `pipeline runs` is newest first (queue time descending), with `--top` defaulting to 25. `--pipeline` accepts a definition ID or an exact, case-insensitive name; duplicate names must be disambiguated by ID. Branch names accept an optional `refs/heads/` prefix. Status values are `none`, `inProgress`, `completed`, `cancelling`, `postponed`, `notStarted`, and `all`; result values are `none`, `succeeded`, `partiallySucceeded`, `failed`, and `canceled` (case-insensitive).
+
+`pipeline show` includes a compact timeline with stage/job/task parent IDs, error/warning issues and a test-run existence/count hint. Intermediate phase records are omitted, with their children linked to the nearest retained parent. `pipeline log` requires exactly one of `--log-id` or `--failed`; it prints raw text rather than JSON. Failed task logs have stage/job/task headers; a failed task without an available log gets a `(no log available)` header, and a build with no failed tasks prints nothing on stdout and a note on stderr. `--tail N` keeps the last N lines of each log, preserving line endings; 0 keeps no log lines. `pipeline tests` returns test-run counts from the Test API's run statistics and paged failed results; `--all` includes all outcomes. `notExecuted` counts the API's `NotExecuted` outcome, rather than treating other outcomes such as `Blocked` as skipped. `pipeline open`, like other open commands, prints the web URL before launching it.
+
+The JSON output contracts for pipelines are:
+
+- `pipeline list`: an array of `{id, name, folder, yamlPath, repository, url}`. YAML path and repository name are `null` when unavailable (for example, a classic definition).
+- `pipeline runs`: an array of `{id, buildNumber, pipeline: {id, name}, status, result, sourceBranch, sourceVersion, reason, requestedFor, queueTime, startTime, finishTime, url}`. `requestedFor` is the display name; unpopulated API fields are `null`.
+- `pipeline show`: the same run object, plus `timeline: [{id, parentId, name, type, state, result, startTime, finishTime, logId, issues}]` and `tests: {exists, count}`.
+- `pipeline tests`: `{buildId, runs: [{id, name, state, total, passed, failed, notExecuted, results}]}`. Each result is `{id, testName, automatedTestName, outcome, errorMessage, stackTrace, durationInMs, testRun: {id, name}}`. Run counts always cover all outcomes, even when only failed results are returned.
+- `pipeline log`: raw log text, not JSON. `pipeline open`: the web URL as one text line, not JSON.
+
 The JSON output contracts for pull-request mutations and queries are:
 
 - `pr query`: an array of `{id, title, status, isDraft, creator, source, target, reviewers, url}`. `creator` and each reviewer's `identity` use the unique name, falling back to display name or `null`; reviewer entries also include `vote`.
@@ -186,7 +214,7 @@ The JSON output contracts for work items are:
 
 For automation and agents, successful PR data commands and `wi query`, `show`, `comments`, `comment`, `create`, `update`, and `fields` output JSON on stdout. Diagnostics go to stderr and failures return a nonzero exit status. Authentication and help remain human-readable and require an interactive terminal where secrets or confirmation are involved. Never parse diagnostics for data, and never place tokens in arguments or environment variables.
 
-The offline suite exercises mock ADO responses, credential-store failures and real temporary Git repositories. The Linux container suite additionally exercises a real Secret Service round-trip. Live ADO permissions, organisation policy and credential-store approval must be verified during interactive setup; tests do not write real credentials or mutate live pull requests. This version reads and updates PR metadata, labels, reviewers, work-item links, changes and threads, reads and updates work items and their links to each other, and reads branch-policy evaluation status; build logs themselves are not exposed as a command.
+The offline suite exercises mock ADO responses, credential-store failures and real temporary Git repositories. The Linux container suite additionally exercises a real Secret Service round-trip. Live ADO permissions, organisation policy and credential-store approval must be verified during interactive setup; tests do not write real credentials or mutate live pull requests. This version reads and updates PR metadata, labels, reviewers, work-item links, changes and threads, reads and updates work items and their links to each other, reads branch-policy evaluation status, and reads pipeline definitions, builds, timelines, logs and test results without queuing or changing runs.
 
 ## License
 

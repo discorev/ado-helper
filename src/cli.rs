@@ -1,6 +1,9 @@
 use crate::{Error, Result, git::is_commit_sha};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod pipelines;
+pub use pipelines::PipelineTarget;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PullRequestTarget {
     CurrentBranch,
@@ -91,6 +94,44 @@ pub struct WorkItemLink {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
     Help,
+    PipelineList {
+        name: Option<String>,
+        profile: Option<String>,
+        project: Option<String>,
+    },
+    PipelineRuns {
+        pipeline: Option<String>,
+        branch: Option<String>,
+        status: Option<String>,
+        result: Option<String>,
+        top: i64,
+        profile: Option<String>,
+        project: Option<String>,
+    },
+    PipelineShow {
+        target: PipelineTarget,
+        profile: Option<String>,
+        project: Option<String>,
+    },
+    PipelineLog {
+        target: PipelineTarget,
+        log_id: Option<i64>,
+        failed: bool,
+        tail: Option<usize>,
+        profile: Option<String>,
+        project: Option<String>,
+    },
+    PipelineTests {
+        target: PipelineTarget,
+        all: bool,
+        profile: Option<String>,
+        project: Option<String>,
+    },
+    PipelineOpen {
+        target: PipelineTarget,
+        profile: Option<String>,
+        project: Option<String>,
+    },
     AuthAdd {
         name: String,
         organization: String,
@@ -334,6 +375,7 @@ pub fn parse(arguments: &[String]) -> Result<CliCommand> {
         ("pr", "comment") => parse_comment(args),
         ("pr", "edit-comment") => parse_edit_comment(args),
         ("pr", "delete-comment") => parse_delete_comment(args),
+        ("pipeline", command) => pipelines::parse(args, command),
         ("wi", "query") => parse_wi_query(args),
         ("wi", "show") => parse_wi_id(args, "show"),
         ("wi", "comments") => parse_wi_id(args, "comments"),

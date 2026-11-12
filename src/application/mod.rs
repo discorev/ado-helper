@@ -1,5 +1,6 @@
 mod auth;
 mod output;
+mod pipelines;
 mod pull_requests;
 mod work_items;
 
@@ -22,6 +23,59 @@ impl Application {
     pub(crate) fn run(&self, c: CliCommand) -> Result<i32> {
         match c {
             CliCommand::Help => println!("{HELP}"),
+            CliCommand::PipelineList {
+                name,
+                profile,
+                project,
+            } => self.pipeline_list(name.as_deref(), profile.as_deref(), project.as_deref())?,
+            CliCommand::PipelineRuns {
+                pipeline,
+                branch,
+                status,
+                result,
+                top,
+                profile,
+                project,
+            } => self.pipeline_runs(
+                pipeline.as_deref(),
+                branch.as_deref(),
+                status.as_deref(),
+                result.as_deref(),
+                top,
+                profile.as_deref(),
+                project.as_deref(),
+            )?,
+            CliCommand::PipelineShow {
+                target,
+                profile,
+                project,
+            } => self.pipeline_show(target, profile.as_deref(), project.as_deref())?,
+            CliCommand::PipelineLog {
+                target,
+                log_id,
+                failed,
+                tail,
+                profile,
+                project,
+            } => self.pipeline_log(
+                target,
+                log_id,
+                failed,
+                tail,
+                profile.as_deref(),
+                project.as_deref(),
+            )?,
+            CliCommand::PipelineTests {
+                target,
+                all,
+                profile,
+                project,
+            } => self.pipeline_tests(target, all, profile.as_deref(), project.as_deref())?,
+            CliCommand::PipelineOpen {
+                target,
+                profile,
+                project,
+            } => self.pipeline_open(target, profile.as_deref(), project.as_deref())?,
             CliCommand::AuthAdd {
                 name,
                 organization,
